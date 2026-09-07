@@ -23,7 +23,7 @@
 // --------------------
 
 #define BUTTON_MODE   7
-#define BUTTON_CLOCK  3
+#define BUTTON_CLOCK  2
 
 // Time required for a long press
 #define BUTTON_HOLD_TIME 2000
@@ -1280,6 +1280,27 @@ void updateButtons()
     bool clockState =
         digitalRead(BUTTON_CLOCK);
 
+    // ========================================================
+    // DEBUG CLOCK BUTTON
+    // ========================================================
+
+    static bool lastDebugClockState = HIGH;
+    bool debugClockState = digitalRead(BUTTON_CLOCK);
+
+    if (debugClockState != lastDebugClockState)
+    {
+        if (debugClockState == LOW)
+        {
+            Serial.println("[BUTTON] CLOCK PRESSED");
+            Serial.println("");
+        }
+        else
+        {
+            Serial.println("[BUTTON] CLOCK RELEASED");
+        }
+
+        lastDebugClockState = debugClockState;
+    }
 
     unsigned long currentMillis =
         millis();
