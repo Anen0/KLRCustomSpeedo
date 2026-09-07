@@ -19,6 +19,17 @@
 
 
 // --------------------
+// Buttons
+// --------------------
+
+#define BUTTON_MODE   7
+#define BUTTON_CLOCK  3
+
+// Time required for a long press
+#define BUTTON_HOLD_TIME 2000
+
+
+// --------------------
 // TFT
 // --------------------
 
@@ -120,6 +131,46 @@ struct DateTime
 
 
 // ============================================================
+// CLOCK SETTING
+// ============================================================
+
+// True while the user is adjusting the clock.
+bool clockSettingMode = false;
+
+// Temporary values used while setting the clock.
+// The RTC is NOT changed until the user saves.
+uint8_t settingHours = 0;
+uint8_t settingMinutes = 0;
+
+
+// ============================================================
+// BUTTON STATE
+// ============================================================
+
+// Current/previous button states.
+//
+// Because INPUT_PULLUP is used:
+//
+// HIGH = button released
+// LOW  = button pressed
+//
+
+bool lastModeButtonState = HIGH;
+bool lastClockButtonState = HIGH;
+
+
+// Time at which each button was pressed.
+unsigned long modeButtonPressedAt = 0;
+unsigned long clockButtonPressedAt = 0;
+
+
+// Used to prevent a long press from also becoming
+// a short press when the button is released.
+bool modeLongPressHandled = false;
+bool clockLongPressHandled = false;
+
+
+// ============================================================
 // SOFTWARE I2C
 // ============================================================
 
@@ -129,11 +180,19 @@ void i2cDelay()
 }
 
 
+// ------------------------------------------------------------
+// Release SDA
+// ------------------------------------------------------------
+
 void releaseSDA()
 {
     pinMode(RTC_SDA_PIN, INPUT_PULLUP);
 }
 
+
+// ------------------------------------------------------------
+// Pull SDA LOW
+// ------------------------------------------------------------
 
 void pullSDA_LOW()
 {
@@ -142,11 +201,19 @@ void pullSDA_LOW()
 }
 
 
+// ------------------------------------------------------------
+// Release SCL
+// ------------------------------------------------------------
+
 void releaseSCL()
 {
     pinMode(RTC_SCL_PIN, INPUT_PULLUP);
 }
 
+
+// ------------------------------------------------------------
+// Pull SCL LOW
+// ------------------------------------------------------------
 
 void pullSCL_LOW()
 {
@@ -155,9 +222,9 @@ void pullSCL_LOW()
 }
 
 
-// ------------------------------------------------------------
+// ============================================================
 // I2C START
-// ------------------------------------------------------------
+// ============================================================
 
 void i2cStart()
 {
@@ -176,9 +243,9 @@ void i2cStart()
 }
 
 
-// ------------------------------------------------------------
+// ============================================================
 // I2C STOP
-// ------------------------------------------------------------
+// ============================================================
 
 void i2cStop()
 {
@@ -196,9 +263,9 @@ void i2cStop()
 }
 
 
-// ------------------------------------------------------------
-// Write one byte
-// ------------------------------------------------------------
+// ============================================================
+// I2C WRITE BYTE
+// ============================================================
 
 bool i2cWriteByte(uint8_t data)
 {
@@ -224,6 +291,8 @@ bool i2cWriteByte(uint8_t data)
         i2cDelay();
     }
 
+
+    // Release SDA so the RTC can ACK
     releaseSDA();
 
     i2cDelay();
@@ -232,7 +301,8 @@ bool i2cWriteByte(uint8_t data)
 
     i2cDelay();
 
-    bool ack = (digitalRead(RTC_SDA_PIN) == LOW);
+    bool ack =
+        (digitalRead(RTC_SDA_PIN) == LOW);
 
     pullSCL_LOW();
 
@@ -242,9 +312,9 @@ bool i2cWriteByte(uint8_t data)
 }
 
 
-// ------------------------------------------------------------
-// Read one byte
-// ------------------------------------------------------------
+// ============================================================
+// I2C READ BYTE
+// ============================================================
 
 uint8_t i2cReadByte(bool sendAck)
 {
@@ -252,22 +322,27 @@ uint8_t i2cReadByte(bool sendAck)
 
     releaseSDA();
 
+
     for (int bit = 7; bit >= 0; bit--)
     {
         releaseSCL();
 
         i2cDelay();
 
+
         if (digitalRead(RTC_SDA_PIN))
         {
             data |= (1 << bit);
         }
+
 
         pullSCL_LOW();
 
         i2cDelay();
     }
 
+
+    // ACK or NACK
     if (sendAck)
     {
         pullSDA_LOW();
@@ -276,6 +351,7 @@ uint8_t i2cReadByte(bool sendAck)
     {
         releaseSDA();
     }
+
 
     i2cDelay();
 
@@ -288,6 +364,7 @@ uint8_t i2cReadByte(bool sendAck)
     releaseSDA();
 
     i2cDelay();
+
 
     return data;
 }
@@ -300,6 +377,12 @@ uint8_t i2cReadByte(bool sendAck)
 uint8_t bcdToDecimal(uint8_t value)
 {
     return ((value >> 4) * 10) + (value & 0x0F);
+}
+
+
+uint8_t decimalToBCD(uint8_t value)
+{
+    return ((value / 10) << 4) | (value % 10);
 }
 
 
@@ -318,9 +401,13 @@ bool readDateTime(DateTime &dt)
 
     i2cStart();
 
-    if (!i2cWriteByte((DS3231_ADDRESS << 1) | 0))
+
+    if (!i2cWriteByte(
+        (DS3231_ADDRESS << 1) | 0
+    ))
     {
         i2cStop();
+
         return false;
     }
 
@@ -329,6 +416,7 @@ bool readDateTime(DateTime &dt)
     if (!i2cWriteByte(0x00))
     {
         i2cStop();
+
         return false;
     }
 
@@ -339,9 +427,13 @@ bool readDateTime(DateTime &dt)
 
     i2cStart();
 
-    if (!i2cWriteByte((DS3231_ADDRESS << 1) | 1))
+
+    if (!i2cWriteByte(
+        (DS3231_ADDRESS << 1) | 1
+    ))
     {
         i2cStop();
+
         return false;
     }
 
@@ -352,7 +444,8 @@ bool readDateTime(DateTime &dt)
 
     for (int i = 0; i < 7; i++)
     {
-        data[i] = i2cReadByte(i < 6);
+        data[i] =
+            i2cReadByte(i < 6);
     }
 
 
@@ -363,19 +456,126 @@ bool readDateTime(DateTime &dt)
     // Convert BCD
     // --------------------------------------------------------
 
-    dt.seconds = bcdToDecimal(data[0] & 0x7F);
+    dt.seconds =
+        bcdToDecimal(data[0] & 0x7F);
 
-    dt.minutes = bcdToDecimal(data[1] & 0x7F);
+    dt.minutes =
+        bcdToDecimal(data[1] & 0x7F);
 
-    dt.hours = bcdToDecimal(data[2] & 0x3F);
+    dt.hours =
+        bcdToDecimal(data[2] & 0x3F);
 
-    dt.day = bcdToDecimal(data[3] & 0x07);
+    dt.day =
+        bcdToDecimal(data[3] & 0x07);
 
-    dt.date = bcdToDecimal(data[4] & 0x3F);
+    dt.date =
+        bcdToDecimal(data[4] & 0x3F);
 
-    dt.month = bcdToDecimal(data[5] & 0x1F);
+    dt.month =
+        bcdToDecimal(data[5] & 0x1F);
 
-    dt.year = 2000 + bcdToDecimal(data[6]);
+    dt.year =
+        2000 + bcdToDecimal(data[6]);
+
+
+    return true;
+}
+
+
+// ============================================================
+// WRITE TIME TO DS3231M
+// ============================================================
+//
+// Writes:
+//   Register 0x00 = seconds
+//   Register 0x01 = minutes
+//   Register 0x02 = hours
+//
+// The date is NOT changed.
+//
+
+bool setTime(
+    uint8_t hours,
+    uint8_t minutes,
+    uint8_t seconds
+)
+{
+    // --------------------------------------------------------
+    // Start write transaction
+    // --------------------------------------------------------
+
+    i2cStart();
+
+
+    // DS3231M address + WRITE
+    if (!i2cWriteByte(
+        (DS3231_ADDRESS << 1) | 0
+    ))
+    {
+        i2cStop();
+
+        return false;
+    }
+
+
+    // Start at register 0x00
+    if (!i2cWriteByte(0x00))
+    {
+        i2cStop();
+
+        return false;
+    }
+
+
+    // --------------------------------------------------------
+    // Seconds
+    // --------------------------------------------------------
+
+    if (!i2cWriteByte(
+        decimalToBCD(seconds)
+    ))
+    {
+        i2cStop();
+
+        return false;
+    }
+
+
+    // --------------------------------------------------------
+    // Minutes
+    // --------------------------------------------------------
+
+    if (!i2cWriteByte(
+        decimalToBCD(minutes)
+    ))
+    {
+        i2cStop();
+
+        return false;
+    }
+
+
+    // --------------------------------------------------------
+    // Hours
+    //
+    // Bit 6 = 0 means 24-hour mode.
+    // --------------------------------------------------------
+
+    if (!i2cWriteByte(
+        decimalToBCD(hours)
+    ))
+    {
+        i2cStop();
+
+        return false;
+    }
+
+
+    // --------------------------------------------------------
+    // Finish transaction
+    // --------------------------------------------------------
+
+    i2cStop();
 
 
     return true;
@@ -400,12 +600,16 @@ int getCenteredX(
     uint8_t textSize
 )
 {
-    int width = getTextWidth(
-        text,
-        textSize
-    );
+    int width =
+        getTextWidth(
+            text,
+            textSize
+        );
 
-    return (SCREEN_WIDTH - width) / 2;
+
+    return (
+        SCREEN_WIDTH - width
+    ) / 2;
 }
 
 
@@ -417,16 +621,24 @@ void showSplashScreen()
 {
     mylcd.Fill_Screen(BLACK);
 
+
     mylcd.Set_Text_colour(WHITE);
+
     mylcd.Set_Text_Back_colour(BLACK);
+
     mylcd.Set_Text_Size(3);
 
-    const char *message = "Initializing...";
 
-    int x = getCenteredX(
-        message,
-        3
-    );
+    const char *message =
+        "Initializing...";
+
+
+    int x =
+        getCenteredX(
+            message,
+            3
+        );
+
 
     mylcd.Print_String(
         message,
@@ -457,6 +669,7 @@ void drawSpeed()
 
     char speedString[8];
 
+
     snprintf(
         speedString,
         sizeof(speedString),
@@ -468,14 +681,19 @@ void drawSpeed()
     mylcd.Set_Text_colour(SPEED_GREEN);
     mylcd.Set_Text_Back_colour(BLACK);
 
-    // Large speed
+
+    // Your chosen speed size
     mylcd.Set_Text_Size(11);
 
 
+    // Your chosen position
+    // int speedX = 12;
     int speedX = getCenteredX(
         speedString,
         12
     );
+
+
 
 
     mylcd.Print_String(
@@ -490,7 +708,9 @@ void drawSpeed()
     // --------------------------------------------------------
 
     mylcd.Set_Text_colour(WHITE);
+
     mylcd.Set_Text_Size(2);
+
 
     mylcd.Print_String(
         "km/h",
@@ -507,6 +727,7 @@ void drawSpeed()
 void drawTripMode()
 {
     mylcd.Set_Text_Back_colour(BLACK);
+
     mylcd.Set_Text_Size(2);
 
 
@@ -516,6 +737,7 @@ void drawTripMode()
 
     mylcd.Set_Text_colour(WHITE);
 
+
     mylcd.Print_String(
         "Trip [",
         5,
@@ -524,7 +746,7 @@ void drawTripMode()
 
 
     // --------------------------------------------------------
-    // Selected number
+    // Selected mode
     // --------------------------------------------------------
 
     mylcd.Set_Text_colour(TRIP_RED);
@@ -534,7 +756,7 @@ void drawTripMode()
     {
         mylcd.Print_String(
             "1",
-            80,
+            78,
             133
         );
     }
@@ -542,15 +764,15 @@ void drawTripMode()
     {
         mylcd.Print_String(
             "2",
-            80,
+            78,
             133
         );
     }
     else
     {
         mylcd.Print_String(
-            "TTL",
-            80,
+            "X",
+            78,
             133
         );
     }
@@ -567,7 +789,7 @@ void drawTripMode()
     {
         mylcd.Print_String(
             "]",
-            118,
+            89,
             133
         );
     }
@@ -575,8 +797,7 @@ void drawTripMode()
     {
         mylcd.Print_String(
             "]",
-            // 80,
-            93,
+            89,
             133
         );
     }
@@ -587,9 +808,12 @@ void drawTripMode()
 // DRAW DATE
 // ============================================================
 
-void drawDate(const DateTime &dt)
+void drawDate(
+    const DateTime &dt
+)
 {
     char dateString[11];
+
 
     snprintf(
         dateString,
@@ -601,14 +825,20 @@ void drawDate(const DateTime &dt)
     );
 
 
-    mylcd.Set_Text_colour(DATE_ORANGE);
-    mylcd.Set_Text_Back_colour(BLACK);
+    mylcd.Set_Text_colour(
+        DATE_ORANGE
+    );
+
+    mylcd.Set_Text_Back_colour(
+        BLACK
+    );
+
     mylcd.Set_Text_Size(2);
 
 
+    // Your chosen position
     mylcd.Print_String(
         dateString,
-        // 115,
         120,
         133
     );
@@ -626,6 +856,10 @@ void drawTime(
 {
     char timeString[6];
 
+
+    // --------------------------------------------------------
+    // Blinking colon
+    // --------------------------------------------------------
 
     if (colonVisible)
     {
@@ -649,8 +883,14 @@ void drawTime(
     }
 
 
-    mylcd.Set_Text_colour(TIME_CYAN);
-    mylcd.Set_Text_Back_colour(BLACK);
+    mylcd.Set_Text_colour(
+        TIME_CYAN
+    );
+
+    mylcd.Set_Text_Back_colour(
+        BLACK
+    );
+
     mylcd.Set_Text_Size(2);
 
 
@@ -686,7 +926,7 @@ void drawDistance()
 
 
     // --------------------------------------------------------
-    // Clear region
+    // Clear distance region
     // --------------------------------------------------------
 
     mylcd.Fill_Rect(
@@ -700,12 +940,12 @@ void drawDistance()
 
     // --------------------------------------------------------
     // Convert distance to string
-    // --------------------------------------------------------
     //
     // No decimal place.
-    //
+    // --------------------------------------------------------
 
     char distanceString[20];
+
 
     dtostrf(
         distance,
@@ -720,8 +960,11 @@ void drawDistance()
     // --------------------------------------------------------
 
     mylcd.Set_Text_colour(WHITE);
+
     mylcd.Set_Text_Back_colour(BLACK);
+
     mylcd.Set_Text_Size(4);
+
 
     mylcd.Print_String(
         distanceString,
@@ -735,6 +978,7 @@ void drawDistance()
     // --------------------------------------------------------
 
     mylcd.Set_Text_Size(4);
+
 
     mylcd.Print_String(
         "km",
@@ -794,6 +1038,597 @@ void drawDashboard(
 
 
 // ============================================================
+// CLOCK SETTING SCREEN
+// ============================================================
+
+void drawClockSettingScreen()
+{
+    mylcd.Fill_Screen(BLACK);
+
+
+    // --------------------------------------------------------
+    // Title
+    // --------------------------------------------------------
+
+    mylcd.Set_Text_colour(WHITE);
+
+    mylcd.Set_Text_Back_colour(BLACK);
+
+    mylcd.Set_Text_Size(3);
+
+
+    mylcd.Print_String(
+        "SET CLOCK",
+        105,
+        25
+    );
+
+
+    // --------------------------------------------------------
+    // Current setting time
+    // --------------------------------------------------------
+
+    char timeString[6];
+
+
+    snprintf(
+        timeString,
+        sizeof(timeString),
+        "%02d:%02d",
+        settingHours,
+        settingMinutes
+    );
+
+
+    mylcd.Set_Text_colour(
+        TIME_CYAN
+    );
+
+    mylcd.Set_Text_Size(6);
+
+
+    int timeX =
+        getCenteredX(
+            timeString,
+            6
+        );
+
+
+    mylcd.Print_String(
+        timeString,
+        timeX,
+        85
+    );
+
+
+    // --------------------------------------------------------
+    // Instructions
+    // --------------------------------------------------------
+
+    mylcd.Set_Text_colour(WHITE);
+
+    mylcd.Set_Text_Size(2);
+
+
+    mylcd.Print_String(
+        "MODE = HOUR",
+        25,
+        175
+    );
+
+
+    mylcd.Print_String(
+        "CLOCK = MIN",
+        175,
+        175
+    );
+
+
+    mylcd.Print_String(
+        "Hold CLOCK to SAVE",
+        75,
+        205
+    );
+}
+
+
+// ============================================================
+// ENTER CLOCK SETTING MODE
+// ============================================================
+
+void enterClockSettingMode()
+{
+    DateTime now;
+
+
+    if (!readDateTime(now))
+    {
+        Serial.println(
+            "[CLOCK] ERROR: Cannot read RTC."
+        );
+
+        return;
+    }
+
+
+    // --------------------------------------------------------
+    // Copy current RTC time into temporary values
+    // --------------------------------------------------------
+
+    settingHours =
+        now.hours;
+
+    settingMinutes =
+        now.minutes;
+
+
+    clockSettingMode = true;
+
+
+    Serial.println();
+    Serial.println(
+        "[CLOCK] Entering clock setting mode."
+    );
+
+
+    Serial.print(
+        "[CLOCK] Current time: "
+    );
+
+
+    if (settingHours < 10)
+        Serial.print("0");
+
+    Serial.print(settingHours);
+
+    Serial.print(":");
+
+
+    if (settingMinutes < 10)
+        Serial.print("0");
+
+    Serial.println(settingMinutes);
+
+
+    drawClockSettingScreen();
+}
+
+
+// ============================================================
+// SAVE CLOCK SETTING
+// ============================================================
+
+void saveClockSetting()
+{
+    Serial.println(
+        "[CLOCK] Saving new time..."
+    );
+
+
+    // Seconds are deliberately set to zero.
+    if (
+        setTime(
+            settingHours,
+            settingMinutes,
+            0
+        )
+    )
+    {
+        Serial.print(
+            "[CLOCK] New time: "
+        );
+
+
+        if (settingHours < 10)
+            Serial.print("0");
+
+        Serial.print(settingHours);
+
+        Serial.print(":");
+
+
+        if (settingMinutes < 10)
+            Serial.print("0");
+
+        Serial.print(settingMinutes);
+
+        Serial.println(":00");
+
+
+        Serial.println(
+            "[CLOCK] RTC updated successfully."
+        );
+
+
+        // Exit setting mode
+        clockSettingMode = false;
+
+
+        // ----------------------------------------------------
+        // Return to dashboard
+        // ----------------------------------------------------
+
+        DateTime now;
+
+
+        if (readDateTime(now))
+        {
+            drawDashboard(
+                now,
+                true
+            );
+        }
+    }
+    else
+    {
+        Serial.println(
+            "[CLOCK] ERROR: Failed to write RTC."
+        );
+    }
+}
+
+
+// ============================================================
+// BUTTON STATE
+// ============================================================
+
+void updateButtons()
+{
+    bool modeState =
+        digitalRead(BUTTON_MODE);
+
+    bool clockState =
+        digitalRead(BUTTON_CLOCK);
+
+
+    unsigned long currentMillis =
+        millis();
+
+
+    // ========================================================
+    // MODE BUTTON
+    // ========================================================
+
+    // --------------------------------------------------------
+    // Button just pressed
+    // --------------------------------------------------------
+
+    if (
+        modeState == LOW &&
+        lastModeButtonState == HIGH
+    )
+    {
+        modeButtonPressedAt =
+            currentMillis;
+
+        modeLongPressHandled = false;
+    }
+
+
+    // --------------------------------------------------------
+    // Button being held
+    // --------------------------------------------------------
+
+    if (
+        modeState == LOW &&
+        !modeLongPressHandled
+    )
+    {
+        if (
+            currentMillis -
+            modeButtonPressedAt
+            >= BUTTON_HOLD_TIME
+        )
+        {
+            modeLongPressHandled = true;
+
+
+            // =================================================
+            // CLOCK SETTING MODE
+            // =================================================
+
+            if (clockSettingMode)
+            {
+                // Hold MODE is treated as a long press,
+                // but we don't need a special long-press
+                // action for clock setting.
+                //
+                // The hour is controlled by SHORT MODE press.
+            }
+
+
+            // =================================================
+            // NORMAL MODE
+            // =================================================
+
+            else
+            {
+                // Long press = reset current trip
+
+                if (
+                    currentTripMode == TRIP_1
+                )
+                {
+                    trip1Distance = 0.0;
+
+
+                    Serial.println(
+                        "[TRIP] Trip 1 reset."
+                    );
+
+
+                    drawDistance();
+                }
+                else if (
+                    currentTripMode == TRIP_2
+                )
+                {
+                    trip2Distance = 0.0;
+
+
+                    Serial.println(
+                        "[TRIP] Trip 2 reset."
+                    );
+
+
+                    drawDistance();
+                }
+                else
+                {
+                    Serial.println(
+                        "[TRIP] TTL cannot be reset."
+                    );
+                }
+            }
+        }
+    }
+
+
+    // --------------------------------------------------------
+    // Button released
+    // --------------------------------------------------------
+
+    if (
+        modeState == HIGH &&
+        lastModeButtonState == LOW
+    )
+    {
+        // Only process short press if the long press
+        // wasn't already handled.
+        if (!modeLongPressHandled)
+        {
+            // =================================================
+            // CLOCK SETTING MODE
+            // =================================================
+
+            if (clockSettingMode)
+            {
+                // Short MODE = increase hour
+
+                settingHours++;
+
+
+                if (settingHours >= 24)
+                    settingHours = 0;
+
+
+                Serial.print(
+                    "[CLOCK] Hour: "
+                );
+
+
+                if (settingHours < 10)
+                    Serial.print("0");
+
+                Serial.println(
+                    settingHours
+                );
+
+
+                drawClockSettingScreen();
+            }
+
+
+            // =================================================
+            // NORMAL MODE
+            // =================================================
+
+            else
+            {
+                // Short MODE = change trip
+
+                if (
+                    currentTripMode == TRIP_1
+                )
+                {
+                    currentTripMode =
+                        TRIP_2;
+                }
+                else if (
+                    currentTripMode == TRIP_2
+                )
+                {
+                    currentTripMode =
+                        TOTAL;
+                }
+                else
+                {
+                    currentTripMode =
+                        TRIP_1;
+                }
+
+
+                Serial.print(
+                    "[TRIP] Mode changed to: "
+                );
+
+
+                if (
+                    currentTripMode == TRIP_1
+                )
+                {
+                    Serial.println(
+                        "TRIP 1"
+                    );
+                }
+                else if (
+                    currentTripMode == TRIP_2
+                )
+                {
+                    Serial.println(
+                        "TRIP 2"
+                    );
+                }
+                else
+                {
+                    Serial.println(
+                        "TTL"
+                    );
+                }
+
+
+                DateTime now;
+
+
+                if (readDateTime(now))
+                {
+                    drawDashboard(
+                        now,
+                        true
+                    );
+                }
+            }
+        }
+    }
+
+
+    // ========================================================
+    // CLOCK BUTTON
+    // ========================================================
+
+    // --------------------------------------------------------
+    // Button just pressed
+    // --------------------------------------------------------
+
+    if (
+        clockState == LOW &&
+        lastClockButtonState == HIGH
+    )
+    {
+        clockButtonPressedAt =
+            currentMillis;
+
+        clockLongPressHandled = false;
+    }
+
+
+    // --------------------------------------------------------
+    // Button being held
+    // --------------------------------------------------------
+
+    if (
+        clockState == LOW &&
+        !clockLongPressHandled
+    )
+    {
+        if (
+            currentMillis -
+            clockButtonPressedAt
+            >= BUTTON_HOLD_TIME
+        )
+        {
+            clockLongPressHandled = true;
+
+
+            // =================================================
+            // CLOCK SETTING MODE
+            // =================================================
+
+            if (clockSettingMode)
+            {
+                // Hold CLOCK = save
+
+                saveClockSetting();
+            }
+
+
+            // =================================================
+            // NORMAL MODE
+            // =================================================
+
+            else
+            {
+                // Hold CLOCK = enter clock setting
+
+                enterClockSettingMode();
+            }
+        }
+    }
+
+
+    // --------------------------------------------------------
+    // Button released
+    // --------------------------------------------------------
+
+    if (
+        clockState == HIGH &&
+        lastClockButtonState == LOW
+    )
+    {
+        // Only process short press if this wasn't
+        // a long press.
+        if (!clockLongPressHandled)
+        {
+            if (clockSettingMode)
+            {
+                // Short CLOCK = increase minute
+
+                settingMinutes++;
+
+
+                if (settingMinutes >= 60)
+                    settingMinutes = 0;
+
+
+                Serial.print(
+                    "[CLOCK] Minute: "
+                );
+
+
+                if (settingMinutes < 10)
+                    Serial.print("0");
+
+                Serial.println(
+                    settingMinutes
+                );
+
+
+                drawClockSettingScreen();
+            }
+
+            // In normal dashboard mode:
+            //
+            // Short CLOCK currently does nothing.
+            //
+            // We intentionally leave this available for
+            // a future function.
+        }
+    }
+
+
+    // --------------------------------------------------------
+    // Save current button states
+    // --------------------------------------------------------
+
+    lastModeButtonState =
+        modeState;
+
+    lastClockButtonState =
+        clockState;
+}
+
+
+// ============================================================
 // SETUP
 // ============================================================
 
@@ -801,21 +1636,53 @@ void setup()
 {
     Serial.begin(115200);
 
+
     // Give USB Serial time to connect
     delay(2000);
 
 
     Serial.println();
-    Serial.println("==============================");
-    Serial.println("MOTORCYCLE DASHBOARD");
-    Serial.println("==============================");
+
+    Serial.println(
+        "=============================="
+    );
+
+    Serial.println(
+        "MOTORCYCLE DASHBOARD"
+    );
+
+    Serial.println(
+        "=============================="
+    );
 
 
-    // --------------------------------------------------------
-    // Initialize software I2C
-    // --------------------------------------------------------
+    // ========================================================
+    // BUTTONS
+    // ========================================================
+
+    // INPUT_PULLUP means:
+    //
+    // Button released = HIGH
+    // Button pressed  = LOW
+    //
+
+    pinMode(
+        BUTTON_MODE,
+        INPUT_PULLUP
+    );
+
+    pinMode(
+        BUTTON_CLOCK,
+        INPUT_PULLUP
+    );
+
+
+    // ========================================================
+    // SOFTWARE I2C
+    // ========================================================
 
     releaseSDA();
+
     releaseSCL();
 
     delay(100);
@@ -974,7 +1841,16 @@ void loop()
     static bool colonVisible = true;
 
 
-    unsigned long currentMillis = millis();
+    unsigned long currentMillis =
+        millis();
+
+
+    // ========================================================
+    // BUTTONS
+    // ========================================================
+
+    // Process buttons continuously.
+    updateButtons();
 
 
     // ========================================================
@@ -982,10 +1858,12 @@ void loop()
     // ========================================================
 
     if (
-        currentMillis - lastRTCRead >= 250
+        currentMillis -
+        lastRTCRead >= 250
     )
     {
-        lastRTCRead = currentMillis;
+        lastRTCRead =
+            currentMillis;
 
 
         DateTime now;
@@ -997,7 +1875,10 @@ void loop()
             // Serial debugging
             // ------------------------------------------------
 
-            Serial.print("[RTC] ");
+            Serial.print(
+                "[RTC] "
+            );
+
 
             if (now.hours < 10)
                 Serial.print("0");
@@ -1006,12 +1887,14 @@ void loop()
 
             Serial.print(":");
 
+
             if (now.minutes < 10)
                 Serial.print("0");
 
             Serial.print(now.minutes);
 
             Serial.print(":");
+
 
             if (now.seconds < 10)
                 Serial.print("0");
@@ -1040,11 +1923,12 @@ void loop()
 
 
             // ------------------------------------------------
-            // Update display when minute changes
+            // Update date/time when minute changes
             // ------------------------------------------------
 
             if (
-                now.minutes != lastDisplayedMinute
+                now.minutes !=
+                lastDisplayedMinute
             )
             {
                 lastDisplayedMinute =
@@ -1076,23 +1960,31 @@ void loop()
     // ========================================================
 
     if (
-        currentMillis - lastColonToggle >= 500
+        currentMillis -
+        lastColonToggle >= 500
     )
     {
-        lastColonToggle = currentMillis;
-
-        colonVisible = !colonVisible;
-
-
-        DateTime now;
+        lastColonToggle =
+            currentMillis;
 
 
-        if (readDateTime(now))
+        colonVisible =
+            !colonVisible;
+
+
+        // Don't interfere with the clock-setting screen.
+        if (!clockSettingMode)
         {
-            drawTime(
-                now,
-                colonVisible
-            );
+            DateTime now;
+
+
+            if (readDateTime(now))
+            {
+                drawTime(
+                    now,
+                    colonVisible
+                );
+            }
         }
     }
 
@@ -1101,13 +1993,9 @@ void loop()
     // FUTURE
     // ========================================================
     //
-    // Speed sensor:
+    // Mechanical speed sensor:
     //
     // updateSpeedSensor();
-    //
-    // Buttons:
-    //
-    // updateButtons();
     //
     // Odometer:
     //
