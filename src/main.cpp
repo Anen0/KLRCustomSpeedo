@@ -739,7 +739,7 @@ void drawTripMode()
 
 
     mylcd.Print_String(
-        "Trip [",
+        "Trip (",
         5,
         133
     );
@@ -771,7 +771,7 @@ void drawTripMode()
     else
     {
         mylcd.Print_String(
-            "X",
+            "T",
             78,
             133
         );
@@ -788,7 +788,7 @@ void drawTripMode()
     if (currentTripMode == TOTAL)
     {
         mylcd.Print_String(
-            "]",
+            ")",
             89,
             133
         );
@@ -796,7 +796,7 @@ void drawTripMode()
     else
     {
         mylcd.Print_String(
-            "]",
+            ")",
             89,
             133
         );
