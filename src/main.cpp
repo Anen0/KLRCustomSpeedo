@@ -348,10 +348,12 @@ void drawSpeed() {
 }
 
 void drawTripMode() {
+    mylcd.Fill_Rect(0, 120, 110, 45, BLACK);
+
     mylcd.Set_Text_Back_colour(BLACK);
     mylcd.Set_Text_Size(2);
-
     mylcd.Set_Text_colour(WHITE);
+
     mylcd.Print_String("Trip (", 5, 133);
 
     mylcd.Set_Text_colour(TRIP_RED);
@@ -368,58 +370,45 @@ void drawTripMode() {
 }
 
 void drawDate(const DateTime &dt) {
-    char dateString[11];
-
-    snprintf(
-        dateString,
-        sizeof(dateString),
-        "%02d-%02d-%04d",
-        dt.month,
-        dt.date,
-        dt.year
-    );
-
-    mylcd.Set_Text_colour(DATE_ORANGE);
     mylcd.Set_Text_Back_colour(BLACK);
     mylcd.Set_Text_Size(2);
+    mylcd.Set_Text_colour(DATE_ORANGE);
 
-    mylcd.Print_String(
-        dateString,
-        120,
-        133
-    );
+    char value[6];
+
+    snprintf(value, sizeof(value), "%02d", dt.month);
+    mylcd.Print_String(value, 120, 133);
+
+    mylcd.Print_String("-", 144, 133);
+
+    snprintf(value, sizeof(value), "%02d", dt.date);
+    mylcd.Print_String(value, 156, 133);
+
+    mylcd.Print_String("-", 180, 133);
+
+    snprintf(value, sizeof(value), "%04d", dt.year);
+    mylcd.Print_String(value, 192, 133);
 }
 
 void drawTime(const DateTime &dt, bool colonVisible) {
-    char timeString[6];
-
-    if (colonVisible)
-        snprintf(
-            timeString,
-            sizeof(timeString),
-            "%02d:%02d",
-            dt.hours,
-            dt.minutes
-        );
-    else
-        snprintf(
-            timeString,
-            sizeof(timeString),
-            "%02d %02d",
-            dt.hours,
-            dt.minutes
-        );
-
-    mylcd.Set_Text_colour(TIME_CYAN);
     mylcd.Set_Text_Back_colour(BLACK);
     mylcd.Set_Text_Size(2);
+    mylcd.Set_Text_colour(TIME_CYAN);
 
-    mylcd.Print_String(
-        timeString,
-        258,
-        133
-    );
+    char value[3];
+
+    snprintf(value, sizeof(value), "%02d", dt.hours);
+    mylcd.Print_String(value, 258, 133);
+
+    if (colonVisible)
+        mylcd.Print_String(":", 282, 133);
+    else
+        mylcd.Print_String(" ", 282, 133);
+
+    snprintf(value, sizeof(value), "%02d", dt.minutes);
+    mylcd.Print_String(value, 294, 133);
 }
+
 
 void drawDistance() {
     uint32_t distance;
@@ -478,27 +467,26 @@ void drawDashboard(const DateTime &dt, bool colonVisible) {
     drawDistance();
 }
 
+
+
 void clearDateField(uint8_t field) {
     mylcd.Set_Text_Back_colour(BLACK);
 
     if (field == 0)
-        mylcd.Fill_Rect(120, 130, 12, 20, BLACK);
-
+        mylcd.Fill_Rect(120, 130, 24, 20, BLACK);
     else if (field == 1)
-        mylcd.Fill_Rect(138, 130, 12, 20, BLACK);
-
-    else if (field == 2)
         mylcd.Fill_Rect(156, 130, 24, 20, BLACK);
+    else if (field == 2)
+        mylcd.Fill_Rect(192, 130, 48, 20, BLACK);
 }
 
 void clearTimeField(uint8_t field) {
     mylcd.Set_Text_Back_colour(BLACK);
 
     if (field == 3)
-        mylcd.Fill_Rect(258, 130, 12, 20, BLACK);
-
+        mylcd.Fill_Rect(258, 130, 24, 20, BLACK);
     else if (field == 4)
-        mylcd.Fill_Rect(276, 130, 12, 20, BLACK);
+        mylcd.Fill_Rect(294, 130, 24, 20, BLACK);
 }
 
 void drawEditField(uint8_t field) {
@@ -520,7 +508,6 @@ void drawEditField(uint8_t field) {
 
         mylcd.Print_String(value, 120, 133);
     }
-
     else if (field == 1) {
         clearDateField(1);
 
@@ -531,9 +518,8 @@ void drawEditField(uint8_t field) {
             settingDateTime.date
         );
 
-        mylcd.Print_String(value, 138, 133);
+        mylcd.Print_String(value, 156, 133);
     }
-
     else if (field == 2) {
         clearDateField(2);
 
@@ -544,9 +530,8 @@ void drawEditField(uint8_t field) {
             settingDateTime.year
         );
 
-        mylcd.Print_String(value, 156, 133);
+        mylcd.Print_String(value, 192, 133);
     }
-
     else if (field == 3) {
         clearTimeField(3);
 
@@ -559,7 +544,6 @@ void drawEditField(uint8_t field) {
 
         mylcd.Print_String(value, 258, 133);
     }
-
     else if (field == 4) {
         clearTimeField(4);
 
@@ -570,7 +554,7 @@ void drawEditField(uint8_t field) {
             settingDateTime.minutes
         );
 
-        mylcd.Print_String(value, 276, 133);
+        mylcd.Print_String(value, 294, 133);
     }
 }
 
@@ -591,9 +575,9 @@ void restoreEditField(uint8_t field) {
                 "%02d",
                 settingDateTime.month
             );
+
             mylcd.Print_String(value, 120, 133);
         }
-
         else if (field == 1) {
             snprintf(
                 value,
@@ -601,9 +585,9 @@ void restoreEditField(uint8_t field) {
                 "%02d",
                 settingDateTime.date
             );
-            mylcd.Print_String(value, 138, 133);
-        }
 
+            mylcd.Print_String(value, 156, 133);
+        }
         else {
             snprintf(
                 value,
@@ -611,10 +595,10 @@ void restoreEditField(uint8_t field) {
                 "%04d",
                 settingDateTime.year
             );
-            mylcd.Print_String(value, 156, 133);
+
+            mylcd.Print_String(value, 192, 133);
         }
     }
-
     else {
         clearTimeField(field);
 
@@ -622,7 +606,7 @@ void restoreEditField(uint8_t field) {
         mylcd.Set_Text_Back_colour(BLACK);
         mylcd.Set_Text_colour(TIME_CYAN);
 
-        char value[6];
+        char value[3];
 
         if (field == 3) {
             snprintf(
@@ -631,9 +615,9 @@ void restoreEditField(uint8_t field) {
                 "%02d",
                 settingDateTime.hours
             );
+
             mylcd.Print_String(value, 258, 133);
         }
-
         else {
             snprintf(
                 value,
@@ -641,10 +625,13 @@ void restoreEditField(uint8_t field) {
                 "%02d",
                 settingDateTime.minutes
             );
-            mylcd.Print_String(value, 276, 133);
+
+            mylcd.Print_String(value, 294, 133);
         }
     }
 }
+
+
 
 bool isLeapYear(uint16_t year) {
     return (
@@ -772,6 +759,66 @@ void incrementSettingField() {
     drawEditField(settingField);
 }
 
+void decrementSettingField() {
+    if (settingField == 0) {
+        if (settingDateTime.month <= 1)
+            settingDateTime.month = 12;
+        else
+            settingDateTime.month--;
+
+        uint8_t maxDay = daysInMonth(
+            settingDateTime.year,
+            settingDateTime.month
+        );
+
+        if (settingDateTime.date > maxDay)
+            settingDateTime.date = maxDay;
+    }
+
+    else if (settingField == 1) {
+        if (settingDateTime.date <= 1)
+            settingDateTime.date =
+                daysInMonth(
+                    settingDateTime.year,
+                    settingDateTime.month
+                );
+        else
+            settingDateTime.date--;
+    }
+
+    else if (settingField == 2) {
+        if (settingDateTime.year <= 2000)
+            settingDateTime.year = 2099;
+        else
+            settingDateTime.year--;
+
+        uint8_t maxDay = daysInMonth(
+            settingDateTime.year,
+            settingDateTime.month
+        );
+
+        if (settingDateTime.date > maxDay)
+            settingDateTime.date = maxDay;
+    }
+
+    else if (settingField == 3) {
+        if (settingDateTime.hours == 0)
+            settingDateTime.hours = 23;
+        else
+            settingDateTime.hours--;
+    }
+
+    else if (settingField == 4) {
+        if (settingDateTime.minutes == 0)
+            settingDateTime.minutes = 59;
+        else
+            settingDateTime.minutes--;
+    }
+
+    drawEditField(settingField);
+}
+
+
 void saveClockSetting() {
     settingDateTime.day = calculateDayOfWeek(
         settingDateTime.year,
@@ -889,12 +936,14 @@ void updateButtons() {
             enterClockSettingMode();
     }
 
-    if (
-        clockState == HIGH &&
-        lastClockButtonState == LOW
-    ) {
-        if (!clockLongPressHandled && clockSettingMode)
-            incrementSettingField();
+
+    if ( clockState == HIGH && lastClockButtonState == LOW ) {
+        if (!clockLongPressHandled && clockSettingMode) {
+            if (modeState == LOW)
+                decrementSettingField();
+            else
+                incrementSettingField();
+        }
     }
 
     lastModeButtonState = modeState;
