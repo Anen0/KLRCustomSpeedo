@@ -1,14 +1,27 @@
 #include <Arduino.h>
 #include <LCDWIKI_GUI.h>
 #include <LCDWIKI_SPI.h>
+#include <PinChangeInterrupt.h>
+
+// ==============================
+// RTC CONFIGURATION
+// ==============================
 
 #define RTC_SDA_PIN 4
 #define RTC_SCL_PIN 5
 #define DS3231_ADDRESS 0x68
 
+// ==============================
+// BUTTON CONFIGURATION
+// ==============================
+
 #define BUTTON_MODE 7
 #define BUTTON_CLOCK 2
 #define BUTTON_HOLD_TIME 2000
+
+// ==============================
+// TFT CONFIGURATION
+// ==============================
 
 #define TFT_CS 8
 #define TFT_DC 9
@@ -16,6 +29,10 @@
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
+
+// ==============================
+// SCREEN COLORS
+// ==============================
 
 #define BLACK 0x0000
 #define WHITE 0xFFFF
@@ -25,12 +42,46 @@
 #define TIME_CYAN 0x07FF
 #define EDIT_GREEN 0x07E0
 
+// ==============================
+// SCREEN REGIONS
+// ==============================
+
 #define SPEED_REGION_Y 0
 #define SPEED_REGION_HEIGHT 120
+
 #define INFO_BAR_Y 120
 #define INFO_BAR_HEIGHT 45
+
 #define DISTANCE_REGION_Y 165
 #define DISTANCE_REGION_HEIGHT 75
+
+// ==============================
+// SPEED SENSOR CONFIGURATION
+// ==============================
+
+#define SPEED_SENSOR_PIN 6
+#define SPEED_CALCULATION_INTERVAL 1000
+
+// Change this value during calibration.
+// Current provisional value: 2 pulses per wheel revolution.
+float pulsesPerWheelRevolution = 2.0;
+
+// Approximate circumference of the 21-inch wheel, in meters.
+float wheelCircumferenceMeters = 1.675;
+
+// Interrupt-based pulse counter.
+volatile uint32_t speedPulseCount = 0;
+
+uint32_t previousSpeedPulseCount = 0;
+
+unsigned long lastSpeedCalculation = 0;
+
+// Distance that has not yet accumulated to one complete meter.
+float pendingDistanceMeters = 0.0;
+
+// ==============================
+// TFT OBJECT
+// ==============================
 
 LCDWIKI_SPI mylcd(
     ILI9341,
@@ -40,6 +91,10 @@ LCDWIKI_SPI mylcd(
     -1
 );
 
+// ==============================
+// TRIP MODES
+// ==============================
+
 enum TripMode {
     TRIP_1,
     TRIP_2,
@@ -48,11 +103,19 @@ enum TripMode {
 
 TripMode currentTripMode = TRIP_1;
 
-int currentSpeed = 870;
+// ==============================
+// SPEED AND DISTANCE VARIABLES
+// ==============================
+
+int currentSpeed = 0;
 
 uint32_t trip1Distance = 1000000UL;
 uint32_t trip2Distance = 1000000UL;
 uint32_t totalDistance = 624697UL;
+
+// ==============================
+// DATE/TIME STRUCTURE
+// ==============================
 
 struct DateTime {
     uint8_t seconds;
@@ -65,8 +128,13 @@ struct DateTime {
 };
 
 DateTime settingDateTime;
+
 bool clockSettingMode = false;
 uint8_t settingField = 0;
+
+// ==============================
+// BUTTON VARIABLES
+// ==============================
 
 bool lastModeButtonState = HIGH;
 bool lastClockButtonState = HIGH;
@@ -76,6 +144,10 @@ unsigned long clockButtonPressedAt = 0;
 
 bool modeLongPressHandled = false;
 bool clockLongPressHandled = false;
+
+// ==============================
+// SOFTWARE I2C FUNCTIONS
+// ==============================
 
 void i2cDelay() {
     delayMicroseconds(10);
@@ -103,8 +175,10 @@ void i2cStart() {
     releaseSDA();
     releaseSCL();
     i2cDelay();
+
     pullSDA_LOW();
     i2cDelay();
+
     pullSCL_LOW();
     i2cDelay();
 }
@@ -112,8 +186,10 @@ void i2cStart() {
 void i2cStop() {
     pullSDA_LOW();
     i2cDelay();
+
     releaseSCL();
     i2cDelay();
+
     releaseSDA();
     i2cDelay();
 }
@@ -126,14 +202,17 @@ bool i2cWriteByte(uint8_t data) {
             pullSDA_LOW();
 
         i2cDelay();
+
         releaseSCL();
         i2cDelay();
+
         pullSCL_LOW();
         i2cDelay();
     }
 
     releaseSDA();
     i2cDelay();
+
     releaseSCL();
     i2cDelay();
 
@@ -167,8 +246,10 @@ uint8_t i2cReadByte(bool sendAck) {
         releaseSDA();
 
     i2cDelay();
+
     releaseSCL();
     i2cDelay();
+
     pullSCL_LOW();
     releaseSDA();
     i2cDelay();
@@ -183,6 +264,10 @@ uint8_t bcdToDecimal(uint8_t value) {
 uint8_t decimalToBCD(uint8_t value) {
     return ((value / 10) << 4) | (value % 10);
 }
+
+// ==============================
+// RTC READ/WRITE
+// ==============================
 
 bool readDateTime(DateTime &dt) {
     uint8_t data[7];
@@ -264,7 +349,37 @@ write_error:
     return false;
 }
 
-uint8_t calculateDayOfWeek(uint16_t year, uint8_t month, uint8_t date) {
+// ==============================
+// DATE CALCULATIONS
+// ==============================
+
+bool isLeapYear(uint16_t year) {
+    return (
+        (year % 4 == 0 && year % 100 != 0) ||
+        year % 400 == 0
+    );
+}
+
+uint8_t daysInMonth(uint16_t year, uint8_t month) {
+    if (month == 2)
+        return isLeapYear(year) ? 29 : 28;
+
+    if (
+        month == 4 ||
+        month == 6 ||
+        month == 9 ||
+        month == 11
+    )
+        return 30;
+
+    return 31;
+}
+
+uint8_t calculateDayOfWeek(
+    uint16_t year,
+    uint8_t month,
+    uint8_t date
+) {
     if (month < 3) {
         month += 12;
         year--;
@@ -274,26 +389,46 @@ uint8_t calculateDayOfWeek(uint16_t year, uint8_t month, uint8_t date) {
     uint16_t j = year / 100;
 
     uint16_t h =
-        (date +
-         ((13 * (month + 1)) / 5) +
-         k +
-         (k / 4) +
-         (j / 4) +
-         (5 * j)) % 7;
+        (
+            date +
+            ((13 * (month + 1)) / 5) +
+            k +
+            (k / 4) +
+            (j / 4) +
+            (5 * j)
+        ) % 7;
 
     return ((h + 6) % 7) + 1;
 }
 
-int getTextWidth(const char *text, uint8_t textSize) {
+// ==============================
+// TEXT FUNCTIONS
+// ==============================
+
+int getTextWidth(
+    const char *text,
+    uint8_t textSize
+) {
     return strlen(text) * 6 * textSize;
 }
 
-int getCenteredX(const char *text, uint8_t textSize) {
-    return (SCREEN_WIDTH - getTextWidth(text, textSize)) / 2;
+int getCenteredX(
+    const char *text,
+    uint8_t textSize
+) {
+    return (
+        SCREEN_WIDTH -
+        getTextWidth(text, textSize)
+    ) / 2;
 }
+
+// ==============================
+// SPLASH SCREEN
+// ==============================
 
 void showSplashScreen() {
     mylcd.Fill_Screen(BLACK);
+
     mylcd.Set_Text_colour(WHITE);
     mylcd.Set_Text_Back_colour(BLACK);
     mylcd.Set_Text_Size(3);
@@ -306,6 +441,10 @@ void showSplashScreen() {
         105
     );
 }
+
+// ==============================
+// SCREEN DRAWING FUNCTIONS
+// ==============================
 
 void drawSpeed() {
     mylcd.Fill_Rect(
@@ -348,13 +487,23 @@ void drawSpeed() {
 }
 
 void drawTripMode() {
-    mylcd.Fill_Rect(0, 120, 110, 45, BLACK);
+    mylcd.Fill_Rect(
+        0,
+        120,
+        110,
+        45,
+        BLACK
+    );
 
     mylcd.Set_Text_Back_colour(BLACK);
     mylcd.Set_Text_Size(2);
     mylcd.Set_Text_colour(WHITE);
 
-    mylcd.Print_String("Trip (", 5, 133);
+    mylcd.Print_String(
+        "Trip (",
+        5,
+        133
+    );
 
     mylcd.Set_Text_colour(TRIP_RED);
 
@@ -366,7 +515,12 @@ void drawTripMode() {
         mylcd.Print_String("T", 78, 133);
 
     mylcd.Set_Text_colour(WHITE);
-    mylcd.Print_String(")", 89, 133);
+
+    mylcd.Print_String(
+        ")",
+        89,
+        133
+    );
 }
 
 void drawDate(const DateTime &dt) {
@@ -376,28 +530,53 @@ void drawDate(const DateTime &dt) {
 
     char value[6];
 
-    snprintf(value, sizeof(value), "%02d", dt.month);
-    mylcd.Print_String(value, 120, 133);
+    snprintf(
+        value,
+        sizeof(value),
+        "%02d",
+        dt.month
+    );
 
+    mylcd.Print_String(value, 120, 133);
     mylcd.Print_String("-", 144, 133);
 
-    snprintf(value, sizeof(value), "%02d", dt.date);
-    mylcd.Print_String(value, 156, 133);
+    snprintf(
+        value,
+        sizeof(value),
+        "%02d",
+        dt.date
+    );
 
+    mylcd.Print_String(value, 156, 133);
     mylcd.Print_String("-", 180, 133);
 
-    snprintf(value, sizeof(value), "%04d", dt.year);
+    snprintf(
+        value,
+        sizeof(value),
+        "%04d",
+        dt.year
+    );
+
     mylcd.Print_String(value, 192, 133);
 }
 
-void drawTime(const DateTime &dt, bool colonVisible) {
+void drawTime(
+    const DateTime &dt,
+    bool colonVisible
+) {
     mylcd.Set_Text_Back_colour(BLACK);
     mylcd.Set_Text_Size(2);
     mylcd.Set_Text_colour(TIME_CYAN);
 
     char value[3];
 
-    snprintf(value, sizeof(value), "%02d", dt.hours);
+    snprintf(
+        value,
+        sizeof(value),
+        "%02d",
+        dt.hours
+    );
+
     mylcd.Print_String(value, 258, 133);
 
     if (colonVisible)
@@ -405,10 +584,15 @@ void drawTime(const DateTime &dt, bool colonVisible) {
     else
         mylcd.Print_String(" ", 282, 133);
 
-    snprintf(value, sizeof(value), "%02d", dt.minutes);
+    snprintf(
+        value,
+        sizeof(value),
+        "%02d",
+        dt.minutes
+    );
+
     mylcd.Print_String(value, 294, 133);
 }
-
 
 void drawDistance() {
     uint32_t distance;
@@ -430,7 +614,11 @@ void drawDistance() {
 
     char distanceString[20];
 
-    ultoa(distance, distanceString, 10);
+    ultoa(
+        distance,
+        distanceString,
+        10
+    );
 
     mylcd.Set_Text_colour(WHITE);
     mylcd.Set_Text_Back_colour(BLACK);
@@ -449,7 +637,10 @@ void drawDistance() {
     );
 }
 
-void drawDashboard(const DateTime &dt, bool colonVisible) {
+void drawDashboard(
+    const DateTime &dt,
+    bool colonVisible
+) {
     drawSpeed();
     drawTripMode();
 
@@ -463,11 +654,12 @@ void drawDashboard(const DateTime &dt, bool colonVisible) {
 
     drawDate(dt);
     drawTime(dt, colonVisible);
-
     drawDistance();
 }
 
-
+// ==============================
+// DATE/TIME EDITING DISPLAY
+// ==============================
 
 void clearDateField(uint8_t field) {
     mylcd.Set_Text_Back_colour(BLACK);
@@ -631,29 +823,9 @@ void restoreEditField(uint8_t field) {
     }
 }
 
-
-
-bool isLeapYear(uint16_t year) {
-    return (
-        (year % 4 == 0 && year % 100 != 0) ||
-        year % 400 == 0
-    );
-}
-
-uint8_t daysInMonth(uint16_t year, uint8_t month) {
-    if (month == 2)
-        return isLeapYear(year) ? 29 : 28;
-
-    if (
-        month == 4 ||
-        month == 6 ||
-        month == 9 ||
-        month == 11
-    )
-        return 30;
-
-    return 31;
-}
+// ==============================
+// DATE/TIME SETTING FUNCTIONS
+// ==============================
 
 void enterClockSettingMode() {
     DateTime current;
@@ -667,7 +839,9 @@ void enterClockSettingMode() {
     settingField = 0;
     clockSettingMode = true;
 
-    Serial.println("[CLOCK] Entering date/time setting.");
+    Serial.println(
+        "[CLOCK] Entering date/time setting."
+    );
 
     drawEditField(settingField);
 }
@@ -713,7 +887,6 @@ void incrementSettingField() {
         if (settingDateTime.date > maxDay)
             settingDateTime.date = maxDay;
     }
-
     else if (settingField == 1) {
         settingDateTime.date++;
 
@@ -726,7 +899,6 @@ void incrementSettingField() {
         )
             settingDateTime.date = 1;
     }
-
     else if (settingField == 2) {
         settingDateTime.year++;
 
@@ -741,14 +913,12 @@ void incrementSettingField() {
         if (settingDateTime.date > maxDay)
             settingDateTime.date = maxDay;
     }
-
     else if (settingField == 3) {
         settingDateTime.hours++;
 
         if (settingDateTime.hours > 23)
             settingDateTime.hours = 0;
     }
-
     else if (settingField == 4) {
         settingDateTime.minutes++;
 
@@ -774,18 +944,17 @@ void decrementSettingField() {
         if (settingDateTime.date > maxDay)
             settingDateTime.date = maxDay;
     }
-
     else if (settingField == 1) {
-        if (settingDateTime.date <= 1)
-            settingDateTime.date =
-                daysInMonth(
-                    settingDateTime.year,
-                    settingDateTime.month
-                );
-        else
+        if (settingDateTime.date <= 1) {
+            settingDateTime.date = daysInMonth(
+                settingDateTime.year,
+                settingDateTime.month
+            );
+        }
+        else {
             settingDateTime.date--;
+        }
     }
-
     else if (settingField == 2) {
         if (settingDateTime.year <= 2000)
             settingDateTime.year = 2099;
@@ -800,14 +969,12 @@ void decrementSettingField() {
         if (settingDateTime.date > maxDay)
             settingDateTime.date = maxDay;
     }
-
     else if (settingField == 3) {
         if (settingDateTime.hours == 0)
             settingDateTime.hours = 23;
         else
             settingDateTime.hours--;
     }
-
     else if (settingField == 4) {
         if (settingDateTime.minutes == 0)
             settingDateTime.minutes = 59;
@@ -817,7 +984,6 @@ void decrementSettingField() {
 
     drawEditField(settingField);
 }
-
 
 void saveClockSetting() {
     settingDateTime.day = calculateDayOfWeek(
@@ -835,20 +1001,141 @@ void saveClockSetting() {
 
         DateTime current;
 
-        if (readDateTime(current)) {
+        if (readDateTime(current))
             drawDashboard(current, true);
-        }
     }
     else {
-        Serial.println("[CLOCK] ERROR: Failed to save RTC.");
+        Serial.println(
+            "[CLOCK] ERROR: Failed to save RTC."
+        );
     }
 }
+
+// ==============================
+// SPEED SENSOR INTERRUPT
+// ==============================
+
+void speedPulseISR() {
+    speedPulseCount++;
+}
+
+// ==============================
+// SPEED AND ODOMETER UPDATE
+// ==============================
+
+void updateSpeedSensor() {
+    unsigned long currentMillis = millis();
+
+    if (
+        currentMillis - lastSpeedCalculation <
+        SPEED_CALCULATION_INTERVAL
+    ) {
+        return;
+    }
+
+    lastSpeedCalculation = currentMillis;
+
+    // Safely copy the 32-bit interrupt counter.
+    noInterrupts();
+
+    uint32_t currentPulseCount = speedPulseCount;
+
+    interrupts();
+
+    uint32_t pulsesThisSecond =
+        currentPulseCount - previousSpeedPulseCount;
+
+    previousSpeedPulseCount = currentPulseCount;
+
+    // ==============================
+    // SPEED CALCULATION
+    // ==============================
+
+    float currentSpeedKmh = 0.0;
+
+    if (pulsesPerWheelRevolution > 0.0) {
+        float wheelRevolutionsPerSecond =
+            pulsesThisSecond /
+            pulsesPerWheelRevolution;
+
+        float metersPerSecond =
+            wheelRevolutionsPerSecond *
+            wheelCircumferenceMeters;
+
+        currentSpeedKmh =
+            metersPerSecond * 3.6;
+    }
+
+    currentSpeed = (int)(currentSpeedKmh + 0.5);
+
+    if (currentSpeed < 0)
+        currentSpeed = 0;
+
+    if (currentSpeed > 999)
+        currentSpeed = 999;
+
+    // ==============================
+    // DISTANCE CALCULATION
+    // ==============================
+
+    if (pulsesPerWheelRevolution > 0.0) {
+        float distanceThisSecond =
+            (
+                pulsesThisSecond /
+                pulsesPerWheelRevolution
+            ) * wheelCircumferenceMeters;
+
+        pendingDistanceMeters += distanceThisSecond;
+    }
+
+    uint32_t completeMeters =
+        (uint32_t)pendingDistanceMeters;
+
+    if (completeMeters > 0) {
+        pendingDistanceMeters -= completeMeters;
+
+        if (currentTripMode == TRIP_1)
+            trip1Distance += completeMeters;
+        else if (currentTripMode == TRIP_2)
+            trip2Distance += completeMeters;
+
+        // Total odometer always increases.
+        totalDistance += completeMeters;
+    }
+
+    // ==============================
+    // SERIAL DEBUGGING
+    // ==============================
+
+    Serial.print("[SPEED] Pulses/sec: ");
+    Serial.print(pulsesThisSecond);
+
+    Serial.print(" | Speed: ");
+    Serial.print(currentSpeedKmh, 2);
+
+    Serial.print(" km/h | Total pulses: ");
+    Serial.print(currentPulseCount);
+
+    Serial.print(" | Total distance: ");
+    Serial.println(totalDistance);
+
+    drawSpeed();
+    drawDistance();
+}
+
+// ==============================
+// BUTTON HANDLING
+// ==============================
 
 void updateButtons() {
     bool modeState = digitalRead(BUTTON_MODE);
     bool clockState = digitalRead(BUTTON_CLOCK);
 
     unsigned long currentMillis = millis();
+
+    // ==============================
+    // MODE BUTTON PRESS
+    // ==============================
 
     if (
         modeState == LOW &&
@@ -858,32 +1145,43 @@ void updateButtons() {
         modeLongPressHandled = false;
     }
 
+    // MODE BUTTON LONG PRESS
     if (
         modeState == LOW &&
         !modeLongPressHandled &&
-        currentMillis - modeButtonPressedAt >= BUTTON_HOLD_TIME
+        currentMillis - modeButtonPressedAt >=
+        BUTTON_HOLD_TIME
     ) {
         modeLongPressHandled = true;
 
         if (!clockSettingMode) {
             if (currentTripMode == TRIP_1) {
                 trip1Distance = 0;
-                Serial.println("[TRIP] Trip 1 reset.");
+
+                Serial.println(
+                    "[TRIP] Trip 1 reset."
+                );
+
                 drawDistance();
             }
-
             else if (currentTripMode == TRIP_2) {
                 trip2Distance = 0;
-                Serial.println("[TRIP] Trip 2 reset.");
+
+                Serial.println(
+                    "[TRIP] Trip 2 reset."
+                );
+
                 drawDistance();
             }
-
             else {
-                Serial.println("[TRIP] TTL cannot be reset.");
+                Serial.println(
+                    "[TRIP] TTL cannot be reset."
+                );
             }
         }
     }
 
+    // MODE BUTTON RELEASE
     if (
         modeState == HIGH &&
         lastModeButtonState == LOW
@@ -915,6 +1213,10 @@ void updateButtons() {
         }
     }
 
+    // ==============================
+    // CLOCK BUTTON PRESS
+    // ==============================
+
     if (
         clockState == LOW &&
         lastClockButtonState == HIGH
@@ -923,10 +1225,12 @@ void updateButtons() {
         clockLongPressHandled = false;
     }
 
+    // CLOCK BUTTON LONG PRESS
     if (
         clockState == LOW &&
         !clockLongPressHandled &&
-        currentMillis - clockButtonPressedAt >= BUTTON_HOLD_TIME
+        currentMillis - clockButtonPressedAt >=
+        BUTTON_HOLD_TIME
     ) {
         clockLongPressHandled = true;
 
@@ -936,9 +1240,17 @@ void updateButtons() {
             enterClockSettingMode();
     }
 
-
-    if ( clockState == HIGH && lastClockButtonState == LOW ) {
-        if (!clockLongPressHandled && clockSettingMode) {
+    // CLOCK BUTTON RELEASE
+    if (
+        clockState == HIGH &&
+        lastClockButtonState == LOW
+    ) {
+        if (
+            !clockLongPressHandled &&
+            clockSettingMode
+        ) {
+            // Holding MODE while releasing CLOCK
+            // decrements the selected field.
             if (modeState == LOW)
                 decrementSettingField();
             else
@@ -949,6 +1261,10 @@ void updateButtons() {
     lastModeButtonState = modeState;
     lastClockButtonState = clockState;
 }
+
+// ==============================
+// SETUP
+// ==============================
 
 void setup() {
     Serial.begin(115200);
@@ -963,6 +1279,12 @@ void setup() {
     pinMode(BUTTON_MODE, INPUT_PULLUP);
     pinMode(BUTTON_CLOCK, INPUT_PULLUP);
 
+    pinMode(
+        SPEED_SENSOR_PIN,
+        INPUT_PULLUP
+    );
+
+    // Configure software I2C pins.
     releaseSDA();
     releaseSCL();
 
@@ -974,18 +1296,33 @@ void setup() {
     mylcd.Set_Rotation(1);
     mylcd.Set_Text_Mode(0);
 
-    Serial.println("[TFT] Initialization complete.");
+    Serial.println(
+        "[TFT] Initialization complete."
+    );
 
     showSplashScreen();
 
     delay(2000);
+
+    // Attach pin-change interrupt to D6.
+    attachPCINT(
+        digitalPinToPCINT(SPEED_SENSOR_PIN),
+        speedPulseISR,
+        FALLING
+    );
+
+    Serial.println(
+        "[SPEED] Interrupt sensor enabled on D6."
+    );
 
     Serial.println("[RTC] Testing DS3231M...");
 
     DateTime current;
 
     if (readDateTime(current)) {
-        Serial.println("[RTC] DS3231M communication OK.");
+        Serial.println(
+            "[RTC] DS3231M communication OK."
+        );
 
         Serial.print("[RTC] Time: ");
 
@@ -1025,11 +1362,17 @@ void setup() {
         drawDashboard(current, true);
     }
     else {
-        Serial.println("[RTC] ERROR: DS3231M did not respond.");
+        Serial.println(
+            "[RTC] ERROR: DS3231M did not respond."
+        );
     }
 
     Serial.println("[BOOT] Dashboard ready.");
 }
+
+// ==============================
+// MAIN LOOP
+// ==============================
 
 void loop() {
     static unsigned long lastRTCRead = 0;
@@ -1038,10 +1381,18 @@ void loop() {
 
     unsigned long currentMillis = millis();
 
+    // Process pulse count and speed.
+    updateSpeedSensor();
+
+    // Process buttons.
     updateButtons();
 
+    // RTC updates are paused while editing.
     if (!clockSettingMode) {
-        if (currentMillis - lastRTCRead >= 250) {
+        // Read and print RTC data every 250 ms.
+        if (
+            currentMillis - lastRTCRead >= 250
+        ) {
             lastRTCRead = currentMillis;
 
             DateTime current;
@@ -1083,7 +1434,10 @@ void loop() {
             }
         }
 
-        if (currentMillis - lastColonToggle >= 500) {
+        // Blink the clock colon every 500 ms.
+        if (
+            currentMillis - lastColonToggle >= 500
+        ) {
             lastColonToggle = currentMillis;
             colonVisible = !colonVisible;
 
