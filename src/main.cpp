@@ -194,42 +194,67 @@ void showSplashScreen() {
 
 void drawSpeed() {
     char speedString[8];
+
     int roundedSpeed = (int)(currentSpeed + 0.5);
 
+    // Prevent negative values
+    if (roundedSpeed < 0) {
+    roundedSpeed = 0;
+    }
+
     snprintf(
-        speedString,
-        sizeof(speedString),
-        "%d",
-        roundedSpeed
+    speedString,
+    sizeof(speedString),
+    "%d",
+    roundedSpeed
     );
 
     // Skip drawing if the displayed value has not changed
-    if ( dashboardInitialized && strcmp(speedString, lastDisplayedSpeedString) == 0 ) { return; }
-
-    // Clear only the speed number area
-    // mylcd.Fill_Rect( 35, 15, 220, 100, BLACK );
+    if (
+    dashboardInitialized &&
+    strcmp(speedString, lastDisplayedSpeedString) == 0
+    ) {
+    return;
+    }
 
     // Clear only the actual number area.
     // Adjust these values if your large font extends beyond this region.
-    mylcd.Fill_Rect( 65, 15, 150, 105, BLACK );
+    mylcd.Fill_Rect(
+    65,
+    15,
+    150,
+    105,
+    BLACK
+    );
 
-    
     mylcd.Set_Text_colour(SPEED_GREEN);
     mylcd.Set_Text_Back_colour(BLACK);
     mylcd.Set_Text_Size(11);
 
+    // Center the number based on its actual digit count
     int speedX = getCenteredX(speedString, 11);
 
-    mylcd.Print_String( speedString, speedX, 20 );
+    mylcd.Print_String(
+    speedString,
+    speedX,
+    20
+    );
 
-    // Draw the speed unit in a separate fixed area
+    // Draw the unit separately
     mylcd.Set_Text_colour(WHITE);
     mylcd.Set_Text_Back_colour(BLACK);
     mylcd.Set_Text_Size(2);
 
-    mylcd.Print_String( "km/h", 260, 15 );
+    mylcd.Print_String(
+    "km/h",
+    260,
+    15
+    );
 
-    strcpy( lastDisplayedSpeedString, speedString );
+    strcpy(
+    lastDisplayedSpeedString,
+    speedString
+    );
 }
 
 // =====================================================
