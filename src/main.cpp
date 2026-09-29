@@ -47,7 +47,7 @@ LCDWIKI_SPI mylcd(
 // SPEED SENSOR CALIBRATION
 // =====================================================
 
-// The sensor produces two pulses per wheel revolution
+// Sensor produces two pulses per wheel revolution
 float pulsesPerWheelRevolution = 2.0;
 
 // Wheel circumference in meters
@@ -61,20 +61,32 @@ bool lastSpeedSensorState = HIGH;
 
 uint32_t totalSpeedPulses = 0;
 
+// -----------------------------------------------------
 // Pulse timing
-unsigned long lastPulseTimeMicros = 0;
+// -----------------------------------------------------
+
+// Previous pulse
+unsigned long previousPulseTimeMicros = 0;
+
+// Pulse from two events ago
+unsigned long previousRevolutionPulseTimeMicros = 0;
+
 unsigned long lastPulseTimeMillis = 0;
 
+// -----------------------------------------------------
 // Speed values
+// -----------------------------------------------------
+
 float currentSpeed = 0.0;
 float filteredSpeed = 0.0;
 
-// Smoothing factor:
-// Lower value = smoother but slower response
-// Higher value = faster response but more sensitive to noise
+// Smoothing factor
+// Lower = smoother / slower response
+// Higher = faster / more responsive
 const float SPEED_FILTER_ALPHA = 0.20;
 
-// If no pulse arrives within this time, consider the wheel stopped
+// If no pulse arrives within this time,
+// consider the wheel stopped.
 #define SPEED_TIMEOUT_MS 1500
 
 // =====================================================
@@ -82,7 +94,7 @@ const float SPEED_FILTER_ALPHA = 0.20;
 // =====================================================
 
 // Distances are stored as whole meters.
-//
+
 // Total odometer starts at 624,697 km.
 //
 // 624,697 km × 1,000 = 624,697,000 meters
@@ -160,7 +172,8 @@ int getCenteredX(const char* text, int textSize) {
 // =====================================================
 
 void showSplashScreen() {
-  // Completely clear the screen before drawing the splash
+
+  // Completely clear the screen before drawing splash
   mylcd.Fill_Screen(BLACK);
 
   mylcd.Set_Text_colour(WHITE);
@@ -172,16 +185,18 @@ void showSplashScreen() {
   int textWidth = strlen(splashText) * 18;
   int textX = (SCREEN_WIDTH - textWidth) / 2;
 
-  mylcd.Print_String(splashText, textX, 105);
+  mylcd.Print_String(
+    splashText,
+    textX,
+    105
+  );
 
   delay(2000);
 
-  // Completely clear the splash screen.
-  // This prevents leftover splash pixels from appearing
-  // behind the dashboard.
+  // Completely clear splash screen
   mylcd.Fill_Screen(BLACK);
 
-  // Reset all display caches so the dashboard is fully drawn.
+  // Reset display caches
   lastDisplayedSpeedString[0] = '\0';
   lastDisplayedDistanceString[0] = '\0';
 
@@ -193,68 +208,86 @@ void showSplashScreen() {
 // =====================================================
 
 void drawSpeed() {
-    char speedString[8];
 
-    int roundedSpeed = (int)(currentSpeed + 0.5);
+  char speedString[8];
 
-    // Prevent negative values
-    if (roundedSpeed < 0) {
+  // Display FILTERED speed
+  int roundedSpeed =
+    (int)(filteredSpeed + 0.5);
+
+  // Prevent negative values
+  if (roundedSpeed < 0) {
     roundedSpeed = 0;
-    }
+  }
 
-    snprintf(
+  // No leading zeros
+  snprintf(
     speedString,
     sizeof(speedString),
     "%d",
     roundedSpeed
-    );
+  );
 
-    // Skip drawing if the displayed value has not changed
-    if (
+  // Do not redraw if displayed integer
+  // hasn't changed
+  if (
     dashboardInitialized &&
-    strcmp(speedString, lastDisplayedSpeedString) == 0
-    ) {
+    strcmp(
+      speedString,
+      lastDisplayedSpeedString
+    ) == 0
+  ) {
     return;
-    }
+  }
 
-    // Clear only the actual number area.
-    // Adjust these values if your large font extends beyond this region.
-    mylcd.Fill_Rect(
-    65,
-    15,
-    150,
-    105,
-    BLACK
-    );
+  // ===================================================
+  // ERASE ONLY PREVIOUS SPEED TEXT
+  // ===================================================
 
-    mylcd.Set_Text_colour(SPEED_GREEN);
+  if (lastDisplayedSpeedString[0] != '\0') {
+
+    mylcd.Set_Text_colour(BLACK);
     mylcd.Set_Text_Back_colour(BLACK);
     mylcd.Set_Text_Size(11);
 
-    // Center the number based on its actual digit count
-    int speedX = getCenteredX(speedString, 11);
+    int oldSpeedX =
+      getCenteredX(
+        lastDisplayedSpeedString,
+        11
+      );
 
     mylcd.Print_String(
+      lastDisplayedSpeedString,
+      oldSpeedX,
+      20
+    );
+  }
+
+  // ===================================================
+  // DRAW NEW SPEED
+  // ===================================================
+
+  mylcd.Set_Text_colour(SPEED_GREEN);
+  mylcd.Set_Text_Back_colour(BLACK);
+  mylcd.Set_Text_Size(11);
+
+  int speedX =
+    getCenteredX(
+      speedString,
+      11
+    );
+
+  mylcd.Print_String(
     speedString,
     speedX,
     20
-    );
+  );
 
-    // Draw the unit separately
-    mylcd.Set_Text_colour(WHITE);
-    mylcd.Set_Text_Back_colour(BLACK);
-    mylcd.Set_Text_Size(2);
-
-    mylcd.Print_String(
-    "km/h",
-    260,
-    15
-    );
-
-    strcpy(
+  // Remember displayed speed
+  strcpy(
     lastDisplayedSpeedString,
     speedString
-    );
+  );
 }
 
 // =====================================================
@@ -262,6 +295,7 @@ void drawSpeed() {
 // =====================================================
 
 void drawTripMode() {
+
   if (
     dashboardInitialized &&
     currentTripMode == lastDisplayedTripMode
@@ -269,7 +303,7 @@ void drawTripMode() {
     return;
   }
 
-  // Clear only the trip-mode area
+  // Clear only trip-mode area
   mylcd.Fill_Rect(
     0,
     INFO_BAR_Y,
@@ -291,20 +325,25 @@ void drawTripMode() {
   mylcd.Set_Text_colour(TRIP_RED);
 
   if (currentTripMode == TRIP_1) {
+
     mylcd.Print_String(
       "1",
       78,
       133
     );
+
   }
   else if (currentTripMode == TRIP_2) {
+
     mylcd.Print_String(
       "2",
       78,
       133
     );
+
   }
   else {
+
     mylcd.Print_String(
       "T",
       78,
@@ -320,7 +359,8 @@ void drawTripMode() {
     133
   );
 
-  lastDisplayedTripMode = currentTripMode;
+  lastDisplayedTripMode =
+    currentTripMode;
 }
 
 // =====================================================
@@ -328,21 +368,25 @@ void drawTripMode() {
 // =====================================================
 
 void drawDistance() {
+
   uint32_t selectedDistanceMeters = 0;
 
-  // Select the currently displayed tripmeter.
-  // The other tripmeter values remain untouched.
+  // Select currently displayed tripmeter
   switch (currentTripMode) {
+
     case TRIP_1:
-      selectedDistanceMeters = trip1DistanceMeters;
+      selectedDistanceMeters =
+        trip1DistanceMeters;
       break;
 
     case TRIP_2:
-      selectedDistanceMeters = trip2DistanceMeters;
+      selectedDistanceMeters =
+        trip2DistanceMeters;
       break;
 
     case TOTAL:
-      selectedDistanceMeters = totalDistanceMeters;
+      selectedDistanceMeters =
+        totalDistanceMeters;
       break;
   }
 
@@ -358,15 +402,18 @@ void drawDistance() {
     10
   );
 
-  // Do not redraw if the displayed value has not changed
+  // Do not redraw if unchanged
   if (
     dashboardInitialized &&
-    strcmp(distanceString, lastDisplayedDistanceString) == 0
+    strcmp(
+      distanceString,
+      lastDisplayedDistanceString
+    ) == 0
   ) {
     return;
   }
 
-  // Clear only the distance number area
+  // Clear distance area
   mylcd.Fill_Rect(
     0,
     DISTANCE_REGION_Y,
@@ -385,7 +432,7 @@ void drawDistance() {
     185
   );
 
-  // Redraw the unit because it is inside the cleared area
+  // Draw unit
   mylcd.Set_Text_colour(WHITE);
   mylcd.Set_Text_Back_colour(BLACK);
   mylcd.Set_Text_Size(4);
@@ -407,13 +454,27 @@ void drawDistance() {
 // =====================================================
 
 void drawDashboard() {
-  // Reset display caches so every element is redrawn
+
+  // Reset display caches
   lastDisplayedSpeedString[0] = '\0';
   lastDisplayedDistanceString[0] = '\0';
 
   dashboardInitialized = false;
 
+  // Draw initial speed
   drawSpeed();
+
+  // Draw speed unit once
+  mylcd.Set_Text_colour(WHITE);
+  mylcd.Set_Text_Back_colour(BLACK);
+  mylcd.Set_Text_Size(2);
+
+  mylcd.Print_String(
+    "km/h",
+    260,
+    15
+  );
+
   drawTripMode();
   drawDistance();
 
@@ -425,69 +486,153 @@ void drawDashboard() {
 // =====================================================
 
 void updateSpeedSensor() {
-    bool currentSensorState = digitalRead(SPEED_SENSOR_PIN);
 
-    // Detect a LOW-to-HIGH transition
-    if (
-        currentSensorState == HIGH &&
-        lastSpeedSensorState == LOW
-    ) {
-        unsigned long currentPulseTimeMicros = micros();
-        unsigned long currentPulseTimeMillis = millis();
+  bool currentSensorState =
+    digitalRead(SPEED_SENSOR_PIN);
 
-        totalSpeedPulses++;
+  // ---------------------------------------------------
+  // Detect LOW -> HIGH transition
+  // ---------------------------------------------------
 
-        // Only calculate speed if this is not the first pulse
-        if (lastPulseTimeMicros != 0) {
-        unsigned long pulseIntervalMicros =
-            currentPulseTimeMicros - lastPulseTimeMicros;
+  if (
+    currentSensorState == HIGH &&
+    lastSpeedSensorState == LOW
+  ) {
 
-        // Avoid invalid or extremely short pulse intervals
-        if (pulseIntervalMicros > 1000) {
-            float pulseDistanceMeters =
-            wheelCircumferenceMeters / pulsesPerWheelRevolution;
+    unsigned long currentPulseTimeMicros =
+      micros();
 
-            float pulseIntervalSeconds =
-            pulseIntervalMicros / 1000000.0;
+    unsigned long currentPulseTimeMillis =
+      millis();
 
-            float speedMetersPerSecond =
-            pulseDistanceMeters / pulseIntervalSeconds;
+    totalSpeedPulses++;
 
-            float rawSpeedKph =
-            speedMetersPerSecond * 3.6;
+    // -------------------------------------------------
+    // SPEED CALCULATION
+    //
+    // We use TWO pulse intervals together.
+    //
+    // Pulse A -> Pulse B -> Pulse C
+    //
+    // A to C represents ONE COMPLETE revolution.
+    // -------------------------------------------------
 
-            // Exponential moving average
-            filteredSpeed =
-            filteredSpeed +
-            SPEED_FILTER_ALPHA * (rawSpeedKph - filteredSpeed);
+    if (previousRevolutionPulseTimeMicros != 0) {
 
-            currentSpeed = filteredSpeed;
+      unsigned long revolutionTimeMicros =
+        currentPulseTimeMicros -
+        previousRevolutionPulseTimeMicros;
 
-            Serial.print("[SPEED] Pulse interval: ");
-            Serial.print(pulseIntervalMicros);
-            Serial.print(" us | Raw speed: ");
-            Serial.print(rawSpeedKph, 2);
-            Serial.print(" km/h | Filtered speed: ");
-            Serial.print(currentSpeed, 2);
-            Serial.print(" km/h | Total pulses: ");
-            Serial.println(totalSpeedPulses);
-        }
-        }
+      // Avoid invalid timing values
+      if (revolutionTimeMicros > 1000) {
 
-        lastPulseTimeMicros = currentPulseTimeMicros;
-        lastPulseTimeMillis = currentPulseTimeMillis;
+        // One complete revolution
+        float revolutionTimeSeconds =
+          revolutionTimeMicros / 1000000.0;
+
+        // Calculate speed using one full revolution
+        float speedMetersPerSecond =
+          wheelCircumferenceMeters /
+          revolutionTimeSeconds;
+
+        float rawSpeedKph =
+          speedMetersPerSecond * 3.6;
+
+        // ------------------------------------------------
+        // EXPONENTIAL MOVING AVERAGE
+        // ------------------------------------------------
+
+        filteredSpeed =
+          filteredSpeed +
+          SPEED_FILTER_ALPHA *
+          (rawSpeedKph - filteredSpeed);
+
+        currentSpeed =
+          filteredSpeed;
+
+        // Update TFT immediately
+        drawSpeed();
+
+        // ------------------------------------------------
+        // SERIAL DEBUGGING
+        // ------------------------------------------------
+
+        Serial.print(
+          "[SPEED] Revolution interval: "
+        );
+
+        Serial.print(
+          revolutionTimeMicros
+        );
+
+        Serial.print(
+          " us | Raw speed: "
+        );
+
+        Serial.print(
+          rawSpeedKph,
+          2
+        );
+
+        Serial.print(
+          " km/h | Filtered speed: "
+        );
+
+        Serial.print(
+          currentSpeed,
+          2
+        );
+
+        Serial.print(
+          " km/h | Total pulses: "
+        );
+
+        Serial.println(
+          totalSpeedPulses
+        );
+      }
     }
 
-    lastSpeedSensorState = currentSensorState;
+    // -------------------------------------------------
+    // Shift pulse history
+    //
+    // Current pulse becomes the most recent pulse.
+    //
+    // Previous pulse becomes the pulse from
+    // two events ago.
+    // -------------------------------------------------
 
-    // If no pulse has arrived for a while, gradually bring speed to zero
-    if (
-        lastPulseTimeMillis != 0 &&
-        millis() - lastPulseTimeMillis >= SPEED_TIMEOUT_MS
-    ) {
-        filteredSpeed = 0.0;
-        currentSpeed = 0.0;
+    previousRevolutionPulseTimeMicros =
+      previousPulseTimeMicros;
+
+    previousPulseTimeMicros =
+      currentPulseTimeMicros;
+
+    lastPulseTimeMillis =
+      currentPulseTimeMillis;
+  }
+
+  lastSpeedSensorState =
+    currentSensorState;
+
+  // ---------------------------------------------------
+  // SPEED TIMEOUT
+  // ---------------------------------------------------
+
+  if (
+    lastPulseTimeMillis != 0 &&
+    millis() - lastPulseTimeMillis >=
+      SPEED_TIMEOUT_MS
+  ) {
+
+    if (filteredSpeed != 0.0) {
+
+      filteredSpeed = 0.0;
+      currentSpeed = 0.0;
+
+      drawSpeed();
     }
+  }
 }
 
 // =====================================================
@@ -495,7 +640,9 @@ void updateSpeedSensor() {
 // =====================================================
 
 void changeTripMode() {
+
   switch (currentTripMode) {
+
     case TRIP_1:
       currentTripMode = TRIP_2;
       break;
@@ -509,8 +656,7 @@ void changeTripMode() {
       break;
   }
 
-  // Only change the displayed mode.
-  // Trip 1, Trip 2, and Total retain their values.
+  // Trip values remain untouched
   drawTripMode();
   drawDistance();
 }
@@ -520,7 +666,9 @@ void changeTripMode() {
 // =====================================================
 
 void resetSelectedTrip() {
+
   switch (currentTripMode) {
+
     case TRIP_1:
       trip1DistanceMeters = 0;
       break;
@@ -530,7 +678,7 @@ void resetSelectedTrip() {
       break;
 
     case TOTAL:
-      // The total odometer cannot be reset
+      // Total odometer cannot be reset
       break;
   }
 
@@ -542,41 +690,52 @@ void resetSelectedTrip() {
 // =====================================================
 
 void updateButtons() {
+
   bool currentModeButtonState =
     digitalRead(BUTTON_MODE);
 
-  // Button has just been pressed
+  // Button just pressed
   if (
     currentModeButtonState == LOW &&
     lastModeButtonState == HIGH
   ) {
-    modeButtonPressedAt = millis();
-    modeLongPressHandled = false;
+
+    modeButtonPressedAt =
+      millis();
+
+    modeLongPressHandled =
+      false;
   }
 
-  // Button is being held
+  // Button being held
   if (
     currentModeButtonState == LOW &&
     !modeLongPressHandled &&
-    millis() - modeButtonPressedAt >= BUTTON_HOLD_TIME
+    millis() -
+      modeButtonPressedAt >=
+      BUTTON_HOLD_TIME
   ) {
+
     resetSelectedTrip();
 
-    modeLongPressHandled = true;
+    modeLongPressHandled =
+      true;
   }
 
-  // Button has just been released
+  // Button just released
   if (
     currentModeButtonState == HIGH &&
     lastModeButtonState == LOW
   ) {
-    // Short press changes the trip mode
+
+    // Short press
     if (!modeLongPressHandled) {
       changeTripMode();
     }
   }
 
-  lastModeButtonState = currentModeButtonState;
+  lastModeButtonState =
+    currentModeButtonState;
 }
 
 // =====================================================
@@ -584,21 +743,32 @@ void updateButtons() {
 // =====================================================
 
 void setup() {
+
   Serial.begin(115200);
 
-  pinMode(SPEED_SENSOR_PIN, INPUT_PULLUP);
-  pinMode(BUTTON_MODE, INPUT_PULLUP);
+  pinMode(
+    SPEED_SENSOR_PIN,
+    INPUT_PULLUP
+  );
+
+  pinMode(
+    BUTTON_MODE,
+    INPUT_PULLUP
+  );
 
   mylcd.Init_LCD();
+
   mylcd.Set_Rotation(1);
 
-  // Show and then completely clear the splash screen
+  // Splash screen
   showSplashScreen();
 
-  // Draw the initial dashboard
+  // Initial dashboard
   drawDashboard();
 
-  lastSpeedSensorState = digitalRead(SPEED_SENSOR_PIN);
+  // Establish initial sensor state
+  lastSpeedSensorState =
+    digitalRead(SPEED_SENSOR_PIN);
 }
 
 // =====================================================
@@ -606,6 +776,8 @@ void setup() {
 // =====================================================
 
 void loop() {
+
   updateSpeedSensor();
+
   updateButtons();
 }
