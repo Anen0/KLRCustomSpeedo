@@ -13,6 +13,7 @@
 #define TFT_DC 9
 #define TFT_RESET 10
 
+
 // =====================================================
 // TFT CONFIGURATION
 // =====================================================
@@ -35,6 +36,7 @@
 #define DISTANCE_REGION_Y 165
 #define DISTANCE_REGION_HEIGHT 75
 
+
 LCDWIKI_SPI mylcd(
   ILI9341,
   TFT_CS,
@@ -43,15 +45,17 @@ LCDWIKI_SPI mylcd(
   -1
 );
 
+
 // =====================================================
 // SPEED SENSOR CALIBRATION
 // =====================================================
 
 // Sensor produces two pulses per wheel revolution
-float pulsesPerWheelRevolution = 6.0;
+float pulsesPerWheelRevolution = 2.0;
 
 // Wheel circumference in meters
 float wheelCircumferenceMeters = 1.675;
+
 
 // =====================================================
 // SPEED SENSOR VARIABLES
@@ -61,14 +65,19 @@ bool lastSpeedSensorState = HIGH;
 
 uint32_t totalSpeedPulses = 0;
 
+
 // -----------------------------------------------------
 // Pulse timing
 // -----------------------------------------------------
 
-
-
+// Time of the immediately previous pulse
 unsigned long lastPulseTimeMicros = 0;
+
+// Time of the pulse before the immediately previous pulse
+unsigned long previousPulseTimeMicros = 0;
+
 unsigned long lastPulseTimeMillis = 0;
+
 
 // -----------------------------------------------------
 // Speed values
@@ -77,14 +86,32 @@ unsigned long lastPulseTimeMillis = 0;
 float currentSpeed = 0.0;
 float filteredSpeed = 0.0;
 
+// Used so the first valid speed measurement
+// immediately becomes the displayed speed.
+bool speedMeasurementInitialized = false;
+
+
+// -----------------------------------------------------
 // Smoothing factor
+// -----------------------------------------------------
+
 // Lower = smoother / slower response
 // Higher = faster / more responsive
 const float SPEED_FILTER_ALPHA = 0.20;
 
+
+// -----------------------------------------------------
+// Speed timeout
+// -----------------------------------------------------
+
 // If no pulse arrives within this time,
 // consider the wheel stopped.
-#define SPEED_TIMEOUT_MS 1500
+//
+// 3000 ms is used instead of 1500 ms so
+// low-speed wheel movement is not prematurely
+// interpreted as zero speed.
+#define SPEED_TIMEOUT_MS 3000
+
 
 // =====================================================
 // TRIPMETER VARIABLES
@@ -100,7 +127,10 @@ uint32_t trip1DistanceMeters = 0;
 uint32_t trip2DistanceMeters = 0;
 uint32_t totalDistanceMeters = 624697000UL;
 
+// Stores fractional meters between pulses.
 float distanceAccumulatorMeters = 0.0;
+
+
 // =====================================================
 // TRIP MODE
 // =====================================================
@@ -113,6 +143,7 @@ enum TripMode {
 
 TripMode currentTripMode = TRIP_1;
 
+
 // =====================================================
 // BUTTON VARIABLES
 // =====================================================
@@ -124,6 +155,7 @@ bool modeLongPressHandled = false;
 
 #define BUTTON_HOLD_TIME 2000
 
+
 // =====================================================
 // DISPLAY CACHE VARIABLES
 // =====================================================
@@ -134,6 +166,7 @@ char lastDisplayedDistanceString[16] = "";
 TripMode lastDisplayedTripMode = TRIP_1;
 
 bool dashboardInitialized = false;
+
 
 // =====================================================
 // FUNCTION DECLARATIONS
@@ -154,16 +187,19 @@ void resetSelectedTrip();
 
 int getCenteredX(const char* text, int textSize);
 
+
 // =====================================================
 // GET CENTERED X POSITION
 // =====================================================
 
 int getCenteredX(const char* text, int textSize) {
+
   int characterWidth = 6 * textSize;
   int textWidth = strlen(text) * characterWidth;
 
   return (SCREEN_WIDTH - textWidth) / 2;
 }
+
 
 // =====================================================
 // SPLASH SCREEN
@@ -200,6 +236,7 @@ void showSplashScreen() {
 
   dashboardInitialized = false;
 }
+
 
 // =====================================================
 // DRAW SPEED
@@ -238,6 +275,7 @@ void drawSpeed() {
     return;
   }
 
+
   // ===================================================
   // ERASE ONLY PREVIOUS SPEED TEXT
   // ===================================================
@@ -261,6 +299,7 @@ void drawSpeed() {
     );
   }
 
+
   // ===================================================
   // DRAW NEW SPEED
   // ===================================================
@@ -281,12 +320,14 @@ void drawSpeed() {
     20
   );
 
+
   // Remember displayed speed
   strcpy(
     lastDisplayedSpeedString,
     speedString
   );
 }
+
 
 // =====================================================
 // DRAW TRIP MODE
@@ -301,6 +342,7 @@ void drawTripMode() {
     return;
   }
 
+
   // Clear only trip-mode area
   mylcd.Fill_Rect(
     0,
@@ -309,6 +351,7 @@ void drawTripMode() {
     INFO_BAR_HEIGHT,
     BLACK
   );
+
 
   mylcd.Set_Text_colour(WHITE);
   mylcd.Set_Text_Back_colour(BLACK);
@@ -320,7 +363,9 @@ void drawTripMode() {
     133
   );
 
+
   mylcd.Set_Text_colour(TRIP_RED);
+
 
   if (currentTripMode == TRIP_1) {
 
@@ -331,6 +376,7 @@ void drawTripMode() {
     );
 
   }
+
   else if (currentTripMode == TRIP_2) {
 
     mylcd.Print_String(
@@ -340,6 +386,7 @@ void drawTripMode() {
     );
 
   }
+
   else {
 
     mylcd.Print_String(
@@ -349,6 +396,7 @@ void drawTripMode() {
     );
   }
 
+
   mylcd.Set_Text_colour(WHITE);
 
   mylcd.Print_String(
@@ -357,9 +405,11 @@ void drawTripMode() {
     133
   );
 
+
   lastDisplayedTripMode =
     currentTripMode;
 }
+
 
 // =====================================================
 // DRAW DISTANCE
@@ -369,36 +419,49 @@ void drawDistance() {
 
   uint32_t selectedDistanceMeters = 0;
 
+
   // Select currently displayed tripmeter
   switch (currentTripMode) {
 
     case TRIP_1:
+
       selectedDistanceMeters =
         trip1DistanceMeters;
+
       break;
+
 
     case TRIP_2:
+
       selectedDistanceMeters =
         trip2DistanceMeters;
+
       break;
 
+
     case TOTAL:
+
       selectedDistanceMeters =
         totalDistanceMeters;
+
       break;
   }
+
 
   // Display whole kilometers
   uint32_t distanceKilometers =
     selectedDistanceMeters / 1000UL;
 
+
   char distanceString[16];
+
 
   ultoa(
     distanceKilometers,
     distanceString,
     10
   );
+
 
   // Do not redraw if unchanged
   if (
@@ -411,6 +474,7 @@ void drawDistance() {
     return;
   }
 
+
   // Clear distance area
   mylcd.Fill_Rect(
     0,
@@ -419,6 +483,7 @@ void drawDistance() {
     DISTANCE_REGION_HEIGHT,
     BLACK
   );
+
 
   mylcd.Set_Text_colour(TRIP_RED);
   mylcd.Set_Text_Back_colour(BLACK);
@@ -429,6 +494,7 @@ void drawDistance() {
     10,
     185
   );
+
 
   // Draw unit
   mylcd.Set_Text_colour(WHITE);
@@ -441,11 +507,13 @@ void drawDistance() {
     185
   );
 
+
   strcpy(
     lastDisplayedDistanceString,
     distanceString
   );
 }
+
 
 // =====================================================
 // DRAW COMPLETE DASHBOARD
@@ -459,8 +527,10 @@ void drawDashboard() {
 
   dashboardInitialized = false;
 
+
   // Draw initial speed
   drawSpeed();
+
 
   // Draw speed unit once
   mylcd.Set_Text_colour(WHITE);
@@ -473,40 +543,73 @@ void drawDashboard() {
     15
   );
 
+
   drawTripMode();
   drawDistance();
 
+
   dashboardInitialized = true;
 }
+
 
 // =====================================================
 // UPDATE SPEED SENSOR
 // =====================================================
 
 void updateSpeedSensor() {
-  bool currentSensorState = digitalRead(SPEED_SENSOR_PIN);
 
-  // Detect rising edge
-  if (currentSensorState == HIGH && lastSpeedSensorState == LOW) {
+  bool currentSensorState =
+    digitalRead(SPEED_SENSOR_PIN);
 
-    unsigned long currentPulseTimeMicros = micros();
-    unsigned long currentPulseTimeMillis = millis();
+
+  // ===================================================
+  // DETECT RISING EDGE
+  // ===================================================
+
+  if (
+    currentSensorState == HIGH &&
+    lastSpeedSensorState == LOW
+  ) {
+
+    unsigned long currentPulseTimeMicros =
+      micros();
+
+    unsigned long currentPulseTimeMillis =
+      millis();
+
 
     totalSpeedPulses++;
 
-    // ---------------------------------------------------------
+
+    // =================================================
     // DISTANCE
-    // Each pulse represents 1 / pulsesPerWheelRevolution
-    // of a wheel revolution.
-    // ---------------------------------------------------------
+    // =================================================
+
+    // Each pulse represents:
+    //
+    // wheel circumference /
+    // pulses per wheel revolution
+    //
+    // With current calibration:
+    //
+    // 1.675 / 2 = 0.8375 meters per pulse
+
     float pulseDistanceMeters =
-        wheelCircumferenceMeters / pulsesPerWheelRevolution;
+      wheelCircumferenceMeters /
+      pulsesPerWheelRevolution;
+
 
     // Accumulate fractional distance
-    distanceAccumulatorMeters += pulseDistanceMeters;
+    distanceAccumulatorMeters +=
+      pulseDistanceMeters;
 
-    // Convert accumulated distance into whole meters
-    while (distanceAccumulatorMeters >= 1.0) {
+
+    // Convert accumulated distance
+    // into whole meters
+    while (
+      distanceAccumulatorMeters >= 1.0
+    ) {
+
       trip1DistanceMeters++;
       trip2DistanceMeters++;
       totalDistanceMeters++;
@@ -514,51 +617,195 @@ void updateSpeedSensor() {
       distanceAccumulatorMeters -= 1.0;
     }
 
-    // ---------------------------------------------------------
-    // PULSE-TO-PULSE TIMING
-    // ---------------------------------------------------------
-    if (lastPulseTimeMicros != 0) {
 
-      unsigned long pulseIntervalMicros =
-          currentPulseTimeMicros - lastPulseTimeMicros;
+    // =================================================
+    // SPEED CALCULATION
+    // =================================================
+    //
+    // Two pulses represent one complete
+    // wheel revolution.
+    //
+    // Therefore we measure from:
+    //
+    // Pulse N-2 -> Pulse N
+    //
+    // rather than using a single pulse interval.
+    //
+    // This averages the timing of both sensor
+    // pulses and should reduce the effect of
+    // uneven pulse spacing.
 
-      float pulseIntervalMillis =
-          pulseIntervalMicros / 1000.0;
+    if (
+      previousPulseTimeMicros != 0 &&
+      lastPulseTimeMicros != 0
+    ) {
 
-      Serial.print("[PULSE] Pulse interval: ");
-      Serial.print(pulseIntervalMicros);
-      Serial.print(" us | ");
-      Serial.print(pulseIntervalMillis, 3);
-      Serial.print(" ms | Pulse: ");
-      Serial.println(totalSpeedPulses);
+      // Time for one complete wheel revolution
+      unsigned long revolutionTimeMicros =
+        currentPulseTimeMicros -
+        previousPulseTimeMicros;
 
-    } else {
 
-      // First pulse after startup/reset
-      Serial.print("[PULSE] First pulse | Pulse: ");
-      Serial.println(totalSpeedPulses);
+      if (revolutionTimeMicros > 0) {
+
+        // Convert microseconds to seconds
+        float revolutionTimeSeconds =
+          revolutionTimeMicros / 1000000.0;
+
+
+        // Distance / time = meters per second
+        float speedMetersPerSecond =
+          wheelCircumferenceMeters /
+          revolutionTimeSeconds;
+
+
+        // Convert m/s to km/h
+        currentSpeed =
+          speedMetersPerSecond * 3.6;
+
+
+        // =============================================
+        // SPEED FILTER
+        // =============================================
+
+        if (!speedMeasurementInitialized) {
+
+          // First valid measurement:
+          // use it immediately rather than starting
+          // at 20% of the actual speed.
+
+          filteredSpeed =
+            currentSpeed;
+
+          speedMeasurementInitialized =
+            true;
+        }
+
+        else {
+
+          // Exponential moving average
+          filteredSpeed =
+            (SPEED_FILTER_ALPHA * currentSpeed) +
+            ((1.0 - SPEED_FILTER_ALPHA) *
+             filteredSpeed);
+        }
+
+
+        // =============================================
+        // SERIAL DEBUG
+        // =============================================
+
+        Serial.print("[SPEED] Revolution time: ");
+        Serial.print(
+          revolutionTimeMicros
+        );
+
+        Serial.print(" us | ");
+
+        Serial.print(
+          revolutionTimeSeconds,
+          4
+        );
+
+        Serial.print(" s | Raw: ");
+
+        Serial.print(
+          currentSpeed,
+          2
+        );
+
+        Serial.print(" km/h | Filtered: ");
+
+        Serial.print(
+          filteredSpeed,
+          2
+        );
+
+        Serial.print(" km/h | Pulse: ");
+
+        Serial.println(
+          totalSpeedPulses
+        );
+      }
     }
 
-    // Store this pulse as the previous pulse
-    lastPulseTimeMicros = currentPulseTimeMicros;
-    lastPulseTimeMillis = currentPulseTimeMillis;
+    else {
 
-    
+      // Not enough pulses yet for a complete
+      // wheel revolution measurement.
 
-    // Update trip display if distance changed
+      Serial.print(
+        "[PULSE] First/initial pulse | Pulse: "
+      );
+
+      Serial.println(
+        totalSpeedPulses
+      );
+    }
+
+
+    // =================================================
+    // SHIFT PULSE TIMESTAMPS
+    // =================================================
+
+    previousPulseTimeMicros =
+      lastPulseTimeMicros;
+
+    lastPulseTimeMicros =
+      currentPulseTimeMicros;
+
+    lastPulseTimeMillis =
+      currentPulseTimeMillis;
+
+
+    // =================================================
+    // UPDATE DISPLAY
+    // =================================================
+
+    drawSpeed();
+
     drawDistance();
   }
 
-  // ---------------------------------------------------------
-  // SAVE CURRENT SENSOR STATE
-  // ---------------------------------------------------------
-  lastSpeedSensorState = currentSensorState;
 
-  // ---------------------------------------------------------
+  // ===================================================
+  // SAVE CURRENT SENSOR STATE
+  // ===================================================
+
+  lastSpeedSensorState =
+    currentSensorState;
+
+
+  // ===================================================
   // SPEED TIMEOUT
-  // We are not calculating speed during this diagnostic test,
-  // so no speed timeout is necessary here.
-  // ---------------------------------------------------------
+  // ===================================================
+
+  if (
+    lastPulseTimeMillis != 0 &&
+    millis() - lastPulseTimeMillis >=
+      SPEED_TIMEOUT_MS
+  ) {
+
+    // Only do this if speed isn't already zero
+    if (
+      currentSpeed != 0.0 ||
+      filteredSpeed != 0.0
+    ) {
+
+      currentSpeed = 0.0;
+      filteredSpeed = 0.0;
+
+      speedMeasurementInitialized =
+        false;
+
+      drawSpeed();
+
+
+      Serial.println(
+        "[SPEED] Timeout - wheel stopped"
+      );
+    }
+  }
 }
 
 
@@ -571,22 +818,32 @@ void changeTripMode() {
   switch (currentTripMode) {
 
     case TRIP_1:
+
       currentTripMode = TRIP_2;
+
       break;
+
 
     case TRIP_2:
+
       currentTripMode = TOTAL;
+
       break;
 
+
     case TOTAL:
+
       currentTripMode = TRIP_1;
+
       break;
   }
+
 
   // Trip values remain untouched
   drawTripMode();
   drawDistance();
 }
+
 
 // =====================================================
 // RESET SELECTED TRIP
@@ -597,20 +854,30 @@ void resetSelectedTrip() {
   switch (currentTripMode) {
 
     case TRIP_1:
+
       trip1DistanceMeters = 0;
+
       break;
+
 
     case TRIP_2:
+
       trip2DistanceMeters = 0;
+
       break;
 
+
     case TOTAL:
+
       // Total odometer cannot be reset
+
       break;
   }
 
+
   drawDistance();
 }
+
 
 // =====================================================
 // UPDATE BUTTONS
@@ -621,7 +888,11 @@ void updateButtons() {
   bool currentModeButtonState =
     digitalRead(BUTTON_MODE);
 
-  // Button just pressed
+
+  // ===================================================
+  // BUTTON JUST PRESSED
+  // ===================================================
+
   if (
     currentModeButtonState == LOW &&
     lastModeButtonState == HIGH
@@ -634,7 +905,11 @@ void updateButtons() {
       false;
   }
 
-  // Button being held
+
+  // ===================================================
+  // BUTTON BEING HELD
+  // ===================================================
+
   if (
     currentModeButtonState == LOW &&
     !modeLongPressHandled &&
@@ -649,7 +924,11 @@ void updateButtons() {
       true;
   }
 
-  // Button just released
+
+  // ===================================================
+  // BUTTON JUST RELEASED
+  // ===================================================
+
   if (
     currentModeButtonState == HIGH &&
     lastModeButtonState == LOW
@@ -657,13 +936,16 @@ void updateButtons() {
 
     // Short press
     if (!modeLongPressHandled) {
+
       changeTripMode();
     }
   }
 
+
   lastModeButtonState =
     currentModeButtonState;
 }
+
 
 // =====================================================
 // SETUP
@@ -673,30 +955,58 @@ void setup() {
 
   Serial.begin(115200);
 
+
+  // ===================================================
+  // SENSOR
+  // ===================================================
+
   pinMode(
     SPEED_SENSOR_PIN,
     INPUT_PULLUP
   );
+
+
+  // ===================================================
+  // MODE BUTTON
+  // ===================================================
 
   pinMode(
     BUTTON_MODE,
     INPUT_PULLUP
   );
 
+
+  // ===================================================
+  // TFT
+  // ===================================================
+
   mylcd.Init_LCD();
 
   mylcd.Set_Rotation(1);
 
-  // Splash screen
+
+  // ===================================================
+  // SPLASH SCREEN
+  // ===================================================
+
   showSplashScreen();
 
-  // Initial dashboard
+
+  // ===================================================
+  // INITIAL DASHBOARD
+  // ===================================================
+
   drawDashboard();
 
-  // Establish initial sensor state
+
+  // ===================================================
+  // ESTABLISH INITIAL SENSOR STATE
+  // ===================================================
+
   lastSpeedSensorState =
     digitalRead(SPEED_SENSOR_PIN);
 }
+
 
 // =====================================================
 // MAIN LOOP
