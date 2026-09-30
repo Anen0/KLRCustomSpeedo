@@ -48,7 +48,7 @@ LCDWIKI_SPI mylcd(
 // =====================================================
 
 // Sensor produces two pulses per wheel revolution
-float pulsesPerWheelRevolution = 2.0;
+float pulsesPerWheelRevolution = 6.0;
 
 // Wheel circumference in meters
 float wheelCircumferenceMeters = 1.675;
@@ -65,12 +65,9 @@ uint32_t totalSpeedPulses = 0;
 // Pulse timing
 // -----------------------------------------------------
 
-// Previous pulse
-unsigned long previousPulseTimeMicros = 0;
 
-// Pulse from two events ago
-unsigned long previousRevolutionPulseTimeMicros = 0;
 
+unsigned long lastPulseTimeMicros = 0;
 unsigned long lastPulseTimeMillis = 0;
 
 // -----------------------------------------------------
@@ -103,6 +100,7 @@ uint32_t trip1DistanceMeters = 0;
 uint32_t trip2DistanceMeters = 0;
 uint32_t totalDistanceMeters = 624697000UL;
 
+float distanceAccumulatorMeters = 0.0;
 // =====================================================
 // TRIP MODE
 // =====================================================
@@ -486,154 +484,83 @@ void drawDashboard() {
 // =====================================================
 
 void updateSpeedSensor() {
+  bool currentSensorState = digitalRead(SPEED_SENSOR_PIN);
 
-  bool currentSensorState =
-    digitalRead(SPEED_SENSOR_PIN);
+  // Detect rising edge
+  if (currentSensorState == HIGH && lastSpeedSensorState == LOW) {
 
-  // ---------------------------------------------------
-  // Detect LOW -> HIGH transition
-  // ---------------------------------------------------
-
-  if (
-    currentSensorState == HIGH &&
-    lastSpeedSensorState == LOW
-  ) {
-
-    unsigned long currentPulseTimeMicros =
-      micros();
-
-    unsigned long currentPulseTimeMillis =
-      millis();
+    unsigned long currentPulseTimeMicros = micros();
+    unsigned long currentPulseTimeMillis = millis();
 
     totalSpeedPulses++;
 
-    // -------------------------------------------------
-    // SPEED CALCULATION
-    //
-    // We use TWO pulse intervals together.
-    //
-    // Pulse A -> Pulse B -> Pulse C
-    //
-    // A to C represents ONE COMPLETE revolution.
-    // -------------------------------------------------
+    // ---------------------------------------------------------
+    // DISTANCE
+    // Each pulse represents 1 / pulsesPerWheelRevolution
+    // of a wheel revolution.
+    // ---------------------------------------------------------
+    float pulseDistanceMeters =
+        wheelCircumferenceMeters / pulsesPerWheelRevolution;
 
-    if (previousRevolutionPulseTimeMicros != 0) {
+    // Accumulate fractional distance
+    distanceAccumulatorMeters += pulseDistanceMeters;
 
-      unsigned long revolutionTimeMicros =
-        currentPulseTimeMicros -
-        previousRevolutionPulseTimeMicros;
+    // Convert accumulated distance into whole meters
+    while (distanceAccumulatorMeters >= 1.0) {
+      trip1DistanceMeters++;
+      trip2DistanceMeters++;
+      totalDistanceMeters++;
 
-      // Avoid invalid timing values
-      if (revolutionTimeMicros > 1000) {
-
-        // One complete revolution
-        float revolutionTimeSeconds =
-          revolutionTimeMicros / 1000000.0;
-
-        // Calculate speed using one full revolution
-        float speedMetersPerSecond =
-          wheelCircumferenceMeters /
-          revolutionTimeSeconds;
-
-        float rawSpeedKph =
-          speedMetersPerSecond * 3.6;
-
-        // ------------------------------------------------
-        // EXPONENTIAL MOVING AVERAGE
-        // ------------------------------------------------
-
-        filteredSpeed =
-          filteredSpeed +
-          SPEED_FILTER_ALPHA *
-          (rawSpeedKph - filteredSpeed);
-
-        currentSpeed =
-          filteredSpeed;
-
-        // Update TFT immediately
-        drawSpeed();
-
-        // ------------------------------------------------
-        // SERIAL DEBUGGING
-        // ------------------------------------------------
-
-        Serial.print(
-          "[SPEED] Revolution interval: "
-        );
-
-        Serial.print(
-          revolutionTimeMicros
-        );
-
-        Serial.print(
-          " us | Raw speed: "
-        );
-
-        Serial.print(
-          rawSpeedKph,
-          2
-        );
-
-        Serial.print(
-          " km/h | Filtered speed: "
-        );
-
-        Serial.print(
-          currentSpeed,
-          2
-        );
-
-        Serial.print(
-          " km/h | Total pulses: "
-        );
-
-        Serial.println(
-          totalSpeedPulses
-        );
-      }
+      distanceAccumulatorMeters -= 1.0;
     }
 
-    // -------------------------------------------------
-    // Shift pulse history
-    //
-    // Current pulse becomes the most recent pulse.
-    //
-    // Previous pulse becomes the pulse from
-    // two events ago.
-    // -------------------------------------------------
+    // ---------------------------------------------------------
+    // PULSE-TO-PULSE TIMING
+    // ---------------------------------------------------------
+    if (lastPulseTimeMicros != 0) {
 
-    previousRevolutionPulseTimeMicros =
-      previousPulseTimeMicros;
+      unsigned long pulseIntervalMicros =
+          currentPulseTimeMicros - lastPulseTimeMicros;
 
-    previousPulseTimeMicros =
-      currentPulseTimeMicros;
+      float pulseIntervalMillis =
+          pulseIntervalMicros / 1000.0;
 
-    lastPulseTimeMillis =
-      currentPulseTimeMillis;
+      Serial.print("[PULSE] Pulse interval: ");
+      Serial.print(pulseIntervalMicros);
+      Serial.print(" us | ");
+      Serial.print(pulseIntervalMillis, 3);
+      Serial.print(" ms | Pulse: ");
+      Serial.println(totalSpeedPulses);
+
+    } else {
+
+      // First pulse after startup/reset
+      Serial.print("[PULSE] First pulse | Pulse: ");
+      Serial.println(totalSpeedPulses);
+    }
+
+    // Store this pulse as the previous pulse
+    lastPulseTimeMicros = currentPulseTimeMicros;
+    lastPulseTimeMillis = currentPulseTimeMillis;
+
+    
+
+    // Update trip display if distance changed
+    drawDistance();
   }
 
-  lastSpeedSensorState =
-    currentSensorState;
+  // ---------------------------------------------------------
+  // SAVE CURRENT SENSOR STATE
+  // ---------------------------------------------------------
+  lastSpeedSensorState = currentSensorState;
 
-  // ---------------------------------------------------
+  // ---------------------------------------------------------
   // SPEED TIMEOUT
-  // ---------------------------------------------------
-
-  if (
-    lastPulseTimeMillis != 0 &&
-    millis() - lastPulseTimeMillis >=
-      SPEED_TIMEOUT_MS
-  ) {
-
-    if (filteredSpeed != 0.0) {
-
-      filteredSpeed = 0.0;
-      currentSpeed = 0.0;
-
-      drawSpeed();
-    }
-  }
+  // We are not calculating speed during this diagnostic test,
+  // so no speed timeout is necessary here.
+  // ---------------------------------------------------------
 }
+
 
 // =====================================================
 // CHANGE TRIP MODE
